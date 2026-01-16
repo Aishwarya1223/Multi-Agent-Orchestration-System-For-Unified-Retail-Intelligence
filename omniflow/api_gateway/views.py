@@ -106,48 +106,82 @@ class QueryAPIView(APIView):
             }, status=status.HTTP_200_OK)
 
         # ===============================================================
-        # 🔐 IDENTITY CHECK: Require name before accessing any data
+        # 🔐 DATA ACCESS FLOW: Ask for name, then ID (once), then respond
         # ===============================================================
         user = get_user_from_session(user_email)
-        session_key = f"identified_user_{user_email}"
-        identified = request.session.get(session_key, False)
+        name_key = f"user_name_{user_email}"
+        id_key = f"user_id_ref_{user_email}"
+        user_key = f"user_profile_{user_email}"
+        user_name = request.session.get(name_key)
+        stored_id = request.session.get(id_key)
 
-        if is_data_access_request(query) and not identified:
-            # Ask for the user's name to verify identity
-            if not user or not user.name:
+        # Cache DB user details when available
+        if user and not request.session.get(user_key):
+            request.session[user_key] = {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+            }
+            if user.name and not user_name:
+                request.session[name_key] = user.name
+                user_name = user.name
+            request.session.save()
+
+        if is_data_access_request(query):
+            if not user_name:
+                request.session[name_key] = None
+                request.session.save()
                 return Response({
                     "response": {
-                        "answer": "To access your order or shipment information, please tell me your full name so I can verify your identity.",
+                        "answer": "Before I share any order or shipment details, please tell me your full name.",
                         "confidence": 0.9,
-                        "decision_trace": [{"agent": "System", "reason": "Identity required: name missing"}],
+                        "decision_trace": [{"agent": "System", "reason": "Name required"}],
                     }
                 }, status=status.HTTP_200_OK)
 
-            # If we have a name, ask user to confirm it
-            return Response({
-                "response": {
-                    "answer": f"To proceed, please confirm: Are you {user.name}? (yes/no)",
-                    "confidence": 0.9,
-                    "decision_trace": [{"agent": "System", "reason": "Identity confirmation required"}],
-                }
-            }, status=status.HTTP_200_OK)
+            if not stored_id:
+                if tracking_id:
+                    request.session[id_key] = tracking_id
+                    request.session.save()
+                else:
+                    return Response({
+                        "response": {
+                            "answer": "Thanks. Please provide your order ID or tracking number so I can look it up.",
+                            "confidence": 0.9,
+                            "decision_trace": [{"agent": "System", "reason": "ID required"}],
+                        }
+                    }, status=status.HTTP_200_OK)
 
-        # Handle identity confirmation
-        if is_data_access_request(query) and "yes" in query.lower() and user and user.name:
-            request.session[session_key] = True
+        # Capture name if we were waiting for it
+        if request.session.get(name_key) is None and query and not is_data_access_request(query):
+            captured_name = query.strip()
+            request.session[name_key] = captured_name
+            # Try to resolve user by name if email lookup didn't work
+            if not user:
+                matched = User.objects.filter(name__iexact=captured_name).first()
+                if matched:
+                    request.session[user_key] = {
+                        "id": matched.id,
+                        "name": matched.name,
+                        "email": matched.email,
+                    }
             request.session.save()
             return Response({
                 "response": {
-                    "answer": "Thank you! Your identity is confirmed. Please provide your order ID, tracking number, or tell me how I can help you today.",
-                    "confidence": 0.95,
-                    "decision_trace": [{"agent": "System", "reason": "Identity confirmed"}],
+                    "answer": f"Thanks, {request.session[name_key]}. Please provide your order ID or tracking number.",
+                    "confidence": 0.9,
+                    "decision_trace": [{"agent": "System", "reason": "Name captured"}],
                 }
             }, status=status.HTTP_200_OK)
+
+        # Use stored ID if present and no ID in current query
+        if not tracking_id and stored_id:
+            tracking_id = extract_tracking_id(str(stored_id)) or tracking_id
 
         # ===============================================================
         # 🔐 HARD RULE: TRACKING IS ALWAYS DETERMINISTIC
         # ===============================================================
-        if tracking_id and identified:
+        if tracking_id and (request.session.get(name_key) and request.session.get(id_key)):
             try:
                 # 🔒 Bypass intent + smalltalk + LLM
                 # Supervisor will ONLY resolve, never ask questions

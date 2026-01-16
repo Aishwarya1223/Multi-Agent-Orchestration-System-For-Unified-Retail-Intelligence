@@ -34,7 +34,7 @@ A unified retail assistant powered by isolated multi-agent orchestration. OmniFl
 - **Real-time Communication**: HTTP/REST API (WebSockets optional via Channels)
 - **Containerization**: Docker with Docker Compose
 - **Task Queue**: Redis (optional, for Channels/WebSockets)
-- **ASGI Server**: Daphne (for Channels/WebSockets)
+- **ASGI Server**: Daphne (used for Channels/WebSockets)
 - **Environment Management**: python-dotenv
 - **Image Processing**: Pillow (for return photo evidence)
 - **Voice**: OpenAI Whisper (speech-to-text) and TTS (text-to-speech)
