@@ -18,9 +18,27 @@ A unified retail assistant powered by isolated multi-agent orchestration. OmniFl
 
 ## 📋 Prerequisites
 
-- Python 3.11+
-- Docker & Docker Compose (optional, for containerized deployment)
-- OpenAI API key (for LLM, Whisper, and TTS)
+- **Python 3.11+**
+- **Git** (for cloning and version control)
+- **Docker & Docker Compose** (optional, for containerized deployment)
+- **OpenAI API key** (for LLM, Whisper, and TTS)
+
+### Frameworks & Protocols Used
+
+- **Backend Framework**: Django 4.x with Django REST Framework
+- **Database**: SQLite (multi-database routing per agent)
+- **Agent Orchestration**: LangChain + LangGraph
+- **API Exposure**: All agents exposed via REST API endpoints
+- **Protocol**: MCP (Model Context Protocol) for agent communication
+- **LLM API**: OpenAI (GPT for reasoning, Whisper for transcription, TTS for speech)
+- **Real-time Communication**: HTTP/REST API (WebSockets optional via Channels)
+- **Containerization**: Docker with Docker Compose
+- **Task Queue**: Redis (optional, for Channels/WebSockets)
+- **ASGI Server**: Daphne (for Channels/WebSockets)
+- **Environment Management**: python-dotenv
+- **Image Processing**: Pillow (for return photo evidence)
+- **Voice**: OpenAI Whisper (speech-to-text) and TTS (text-to-speech)
+- **Web Server**: Django development server or Uvicorn/Gunicorn (production)
 
 ---
 
