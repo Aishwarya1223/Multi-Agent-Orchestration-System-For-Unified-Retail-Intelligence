@@ -1,3 +1,4 @@
+import asyncio
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -26,6 +27,19 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------
 
 TRACKING_REGEX = re.compile(r"\b(FWD|REV|NDR|EXC)\s*[-#]?\s*(\d+)\b", re.IGNORECASE)
+
+# Keywords that indicate data access requests
+DATA_ACCESS_KEYWORDS = [
+    "track", "tracking", "shipment", "order", "return", "refund", "ndr", "exchange", "wallet", "balance", "payment", "transaction"
+]
+
+def is_data_access_request(query: str) -> bool:
+    q = query.lower()
+    return any(keyword in q for keyword in DATA_ACCESS_KEYWORDS)
+
+def get_user_from_session(user_email: str) -> User | None:
+    # Try to fetch user by email; if not found, return None
+    return User.objects.filter(email=user_email).first()
 
 def normalize_query(q: str) -> str:
     if not q:
@@ -92,16 +106,55 @@ class QueryAPIView(APIView):
             }, status=status.HTTP_200_OK)
 
         # ===============================================================
+        # 🔐 IDENTITY CHECK: Require name before accessing any data
+        # ===============================================================
+        user = get_user_from_session(user_email)
+        session_key = f"identified_user_{user_email}"
+        identified = request.session.get(session_key, False)
+
+        if is_data_access_request(query) and not identified:
+            # Ask for the user's name to verify identity
+            if not user or not user.name:
+                return Response({
+                    "response": {
+                        "answer": "To access your order or shipment information, please tell me your full name so I can verify your identity.",
+                        "confidence": 0.9,
+                        "decision_trace": [{"agent": "System", "reason": "Identity required: name missing"}],
+                    }
+                }, status=status.HTTP_200_OK)
+
+            # If we have a name, ask user to confirm it
+            return Response({
+                "response": {
+                    "answer": f"To proceed, please confirm: Are you {user.name}? (yes/no)",
+                    "confidence": 0.9,
+                    "decision_trace": [{"agent": "System", "reason": "Identity confirmation required"}],
+                }
+            }, status=status.HTTP_200_OK)
+
+        # Handle identity confirmation
+        if is_data_access_request(query) and "yes" in query.lower() and user and user.name:
+            request.session[session_key] = True
+            request.session.save()
+            return Response({
+                "response": {
+                    "answer": "Thank you! Your identity is confirmed. Please provide your order ID, tracking number, or tell me how I can help you today.",
+                    "confidence": 0.95,
+                    "decision_trace": [{"agent": "System", "reason": "Identity confirmed"}],
+                }
+            }, status=status.HTTP_200_OK)
+
+        # ===============================================================
         # 🔐 HARD RULE: TRACKING IS ALWAYS DETERMINISTIC
         # ===============================================================
-        if tracking_id:
+        if tracking_id and identified:
             try:
                 # 🔒 Bypass intent + smalltalk + LLM
                 # Supervisor will ONLY resolve, never ask questions
-                result = run_supervisor(
+                result = asyncio.run(run_supervisor(
                     query=tracking_id,
                     user_email=user_email
-                )
+                ))
 
                 answer = result.get("answer")
 
@@ -139,8 +192,8 @@ class QueryAPIView(APIView):
         # ===============================================================
         # PAYGUARD (deterministic, identity required)
         # ===============================================================
-        if "wallet" in query.lower() or "balance" in query.lower():
-            user = User.objects.filter(email=user_email).first()
+        if ("wallet" in query.lower() or "balance" in query.lower()) and identified:
+            user = get_user_from_session(user_email)
             if not user:
                 return Response({
                     "response": {
@@ -172,10 +225,10 @@ class QueryAPIView(APIView):
         # FALLBACK → SUPERVISOR (non-tracking only)
         # ===============================================================
         try:
-            result = run_supervisor(
+            result = asyncio.run(run_supervisor(
                 query=query,
                 user_email=user_email
-            )
+            ))
             return Response(
                 {"response": result},
                 status=status.HTTP_200_OK

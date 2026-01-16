@@ -91,7 +91,6 @@ async def mcp_product_lookup(product_name: str) -> dict:
             return {
                 "id": product.id,
                 "name": product.name,
-                "category": product.category,
                 "price": str(product.price)
             }
         return {}

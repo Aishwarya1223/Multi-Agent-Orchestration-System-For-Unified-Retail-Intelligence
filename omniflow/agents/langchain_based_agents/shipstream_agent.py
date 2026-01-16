@@ -132,7 +132,7 @@ def shipment_lookup(order_id: str = "", tracking_number: str = "") -> dict:
     return {}
 
 @tool
-async def mcp_shipment_lookup(order_id: int) -> dict:
+async def mcp_shipment_lookup(order_id: str) -> dict:
     """
     Lookup shipment information via MCP server if available.
     Falls back to local database if MCP is not available.
@@ -181,24 +181,16 @@ async def mcp_warehouse_lookup(warehouse_id: int) -> dict:
     except:
         return {}
 
-async def initialize_mcp_connections():
-    """Initialize MCP connections for shipstream agent"""
-    # Connect to relevant MCP servers for shipping operations
-    await mcp_manager.connect_to_server("shipping_service", ["python", "-m", "shipping_mcp_server"])
-    await mcp_manager.connect_to_server("tracking_service", ["python", "-m", "tracking_mcp_server"])
-    await mcp_manager.connect_to_server("warehouse_service", ["python", "-m", "warehouse_mcp_server"])
-
 def build_shipstream_agent():
     llm = get_llm()
     prompt = get_system_prompt("ShipStream Agent")
 
-    # Note: MCP connections will be established when tools are first called
-    # This avoids event loop issues during agent creation
+    # Include both sync and async tools (LangChain will handle async invocation)
+    tools = [shipment_lookup, mcp_shipment_lookup, mcp_tracking_lookup, mcp_warehouse_lookup]
 
     agent = create_agent(
         model=llm,
-        tools=[shipment_lookup, mcp_shipment_lookup, mcp_tracking_lookup, mcp_warehouse_lookup],
-        system_prompt=prompt
+        tools=tools,
+        prompt=prompt
     )
-
     return agent

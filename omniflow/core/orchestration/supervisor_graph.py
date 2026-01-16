@@ -20,6 +20,8 @@ django.setup()
 # Utilities
 # -------------------------------------------------------------------
 
+import asyncio
+from langchain_core.runnables import Runnable
 from omniflow.utils.logging import get_logger
 from omniflow.utils.config import settings
 
@@ -198,7 +200,7 @@ logger.info("All agents initialized successfully")
 # Graph Nodes
 # -------------------------------------------------------------------
 
-def call_shopcore(state: SupervisorState) -> SupervisorState:
+async def call_shopcore(state: SupervisorState) -> SupervisorState:
     state["decision_trace"].append({
         "agent": "ShopCore",
         "reason": "Initial order & user identification required"
@@ -206,7 +208,7 @@ def call_shopcore(state: SupervisorState) -> SupervisorState:
     logger.info("Calling ShopCore agent")
 
     try:
-        result = SHOPCORE_AGENT.invoke({
+        result = await SHOPCORE_AGENT.ainvoke({
             "input": state["query"],
             "user_email": state["user_email"],
             "product_name": state["query"],
@@ -231,7 +233,7 @@ def call_shopcore(state: SupervisorState) -> SupervisorState:
     return state
 
 
-def call_shipstream(state: SupervisorState) -> SupervisorState:
+async def call_shipstream(state: SupervisorState) -> SupervisorState:
     # If ShopCore didn't resolve an order_id, try extracting a tracking number
     # directly from the user query (e.g. FWD-1013, REV-9001, NDR-504, EXC-201).
     order_id = (state.get("shopcore_ctx") or {}).get("order_id")
@@ -373,7 +375,7 @@ def call_shipstream(state: SupervisorState) -> SupervisorState:
     logger.info(f"Calling ShipStream agent for order_id={order_id}, tracking_number={tracking_number}")
 
     try:
-        result = SHIPSTREAM_AGENT.invoke({
+        result = await SHIPSTREAM_AGENT.ainvoke({
             "input": state["query"],
             "order_id": order_id,
             "tracking_number": tracking_number,
@@ -399,7 +401,7 @@ def call_shipstream(state: SupervisorState) -> SupervisorState:
     return state
 
 
-def call_payguard(state: SupervisorState) -> SupervisorState:
+async def call_payguard(state: SupervisorState) -> SupervisorState:
     if not state["shopcore_ctx"] or not state["shopcore_ctx"].get("user_id"):
         state["decision_trace"].append({
             "agent": "PayGuard",
@@ -423,7 +425,7 @@ def call_payguard(state: SupervisorState) -> SupervisorState:
     logger.info(f"Calling PayGuard agent for user_id={user_id}, order_id={order_id}")
 
     try:
-        result = PAYGUARD_AGENT.invoke({
+        result = await PAYGUARD_AGENT.ainvoke({
             "input": state["query"],
             "user_id": user_id,
             "order_id": order_id,
@@ -446,7 +448,7 @@ def call_payguard(state: SupervisorState) -> SupervisorState:
     return state
 
 
-def call_caredesk(state: SupervisorState) -> SupervisorState:
+async def call_caredesk(state: SupervisorState) -> SupervisorState:
     if not state["shopcore_ctx"] or not state["shopcore_ctx"].get("user_id"):
         state["decision_trace"].append({
             "agent": "CareDesk",
@@ -468,7 +470,7 @@ def call_caredesk(state: SupervisorState) -> SupervisorState:
     logger.info(f"Calling CareDesk agent for user_id={user_id}")
 
     try:
-        result = CAREDESK_AGENT.invoke({
+        result = await CAREDESK_AGENT.ainvoke({
             "input": state["query"],
             "user_id": user_id,
         })
@@ -741,7 +743,7 @@ SUPERVISOR_GRAPH = build_supervisor_graph()
 # Public Runner
 # -------------------------------------------------------------------
 
-def run_supervisor(query: str, user_email: str) -> dict:
+async def run_supervisor(query: str, user_email: str) -> dict:
     def _normalize_identifiers(text: str) -> str:
         t = (text or "")
         if not t:
@@ -769,7 +771,7 @@ def run_supervisor(query: str, user_email: str) -> dict:
         return t
 
     query = _normalize_identifiers(query)
-    result = SUPERVISOR_GRAPH.invoke({
+    result = await SUPERVISOR_GRAPH.ainvoke({
         "query": query,
         "user_email": user_email,
 
