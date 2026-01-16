@@ -14,13 +14,11 @@ venv/
 # Environment variables
 # =========================
 .env
-.env.*
 *.env
 
 # =========================
 # Django
 # =========================
-db.sqlite3
 media/
 staticfiles/
 local_settings.py
