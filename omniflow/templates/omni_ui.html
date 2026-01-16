@@ -1,0 +1,2114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OmniFlow – Multimodal Agent</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    h2 {
+      text-align: center;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin: 20px 0;
+    }
+
+    .chat-footer {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #e5e7eb;
+      position: sticky;
+      bottom: 0;
+      background: white;
+    }
+
+    .chat-footer input {
+      flex: 1;
+    }
+
+    .chat-footer input {
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      background: #fff;
+      padding: 12px 14px;
+      outline: none;
+      box-shadow: 0 1px 0 rgba(16, 24, 40, 0.04);
+    }
+
+    .chat-footer input:focus {
+      border-color: rgba(13, 110, 253, 0.6);
+      box-shadow:
+        0 0 0 4px rgba(13, 110, 253, 0.12),
+        0 1px 0 rgba(16, 24, 40, 0.04);
+    }
+
+    .chat-footer button {
+      height: 44px;
+      min-width: 44px;
+      border-radius: 14px;
+      box-shadow:
+        0 6px 16px rgba(16, 24, 40, 0.10),
+        0 1px 0 rgba(16, 24, 40, 0.04);
+      transition: transform 0.08s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    }
+
+    .chat-footer button:hover {
+      filter: brightness(1.03);
+      box-shadow:
+        0 10px 22px rgba(16, 24, 40, 0.14),
+        0 1px 0 rgba(16, 24, 40, 0.04);
+    }
+
+    .chat-footer button:active {
+      transform: translateY(1px);
+      box-shadow:
+        0 4px 10px rgba(16, 24, 40, 0.10),
+        0 1px 0 rgba(16, 24, 40, 0.04);
+    }
+
+    .chat-footer .btn-primary {
+      background: linear-gradient(180deg, #1f6fff 0%, #0d6efd 100%);
+    }
+
+    .chat-footer .btn-whisper {
+      background: linear-gradient(180deg, #7a56d8 0%, #6f42c1 100%);
+    }
+
+    .chat-footer .btn-danger {
+      background: linear-gradient(180deg, #ff5b6a 0%, #dc3545 100%);
+    }
+
+    .chat-footer .btn-icon {
+      width: 44px;
+      padding: 0;
+      border-radius: 14px;
+    }
+
+    #micIcon {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .btn-icon {
+      width: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    input {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-primary { background: #0d6efd; color: white; }
+    .btn-whisper { background: #6f42c1; color: white; }
+    .btn-danger { background: #dc3545; color: white; }
+    .btn-camera { background: #fd7e14; color: white; }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(17, 24, 39, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 1000;
+    }
+
+    .modal {
+      width: min(680px, 96vw);
+      background: #fff;
+      border-radius: 16px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 24px 60px rgba(16, 24, 40, 0.25);
+      overflow: hidden;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #fff;
+    }
+
+    .modal-title {
+      font-weight: 600;
+    }
+
+    .modal-body {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+
+    pre {
+      background: #f8f9fa;
+      padding: 15px;
+      min-height: 60px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+    }
+
+    .chat-container {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 12px;
+      height: 220px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .msg {
+      max-width: 80%;
+      padding: 10px 12px;
+      border-radius: 14px;
+      line-height: 1.35;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user {
+      align-self: flex-end;
+      background: #0d6efd;
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.user img {
+      display: block;
+      max-width: 240px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.35);
+    }
+
+    .msg.assistant {
+      align-self: flex-start;
+      background: white;
+      color: #111;
+      border: 1px solid #e5e7eb;
+      border-bottom-left-radius: 4px;
+    }
+
+    .msg.confirm-bubble {
+      max-width: fit-content;
+      padding: 8px 10px;
+    }
+
+    .msg.system {
+      align-self: center;
+      background: transparent;
+      color: #6c757d;
+      font-size: 12px;
+      padding: 0;
+      border: none;
+      max-width: 100%;
+    }
+
+    .confirm-card {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .confirm-card .hint {
+      color: #6c757d;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .confirm-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .confirm-actions button {
+      height: 36px;
+      padding: 0 16px;
+      min-width: 96px;
+      border-radius: 12px;
+      box-shadow:
+        0 6px 16px rgba(16, 24, 40, 0.10),
+        0 1px 0 rgba(16, 24, 40, 0.04);
+    }
+
+    .typing {
+      opacity: 0.85;
+    }
+
+    video, img {
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    .voice-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-left: 5px;
+      background: #dc3545;
+    }
+
+    .voice-indicator.listening {
+      background: #28a745;
+      animation: pulse 1.5s infinite;
+    }
+
+    .voice-indicator.processing {
+      background: #ffc107;
+      animation: pulse 1s infinite;
+    }
+
+    .voice-indicator.speaking {
+      background: #007bff;
+      animation: pulse 0.8s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+
+    .transcript-box {
+      background: #e9ecef;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 10px;
+      margin: 10px 0;
+      font-family: monospace;
+      font-size: 14px;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+
+<h2>OmniFlow – Multimodal Agent</h2>
+
+<div class="card">
+  <h3>Chat</h3>
+  <div id="chatHistory" class="chat-container"></div>
+
+<div id="cameraModal" class="modal-overlay" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Camera</div>
+      <button class="btn-danger btn-icon" onclick="closeCameraModal()" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <video id="modalVideo" autoplay playsinline style="width:100%; max-height:360px; border-radius:12px; border:1px solid #e5e7eb;"></video>
+      <img id="modalPreview" style="display:none; width:100%; max-height:360px; object-fit:contain; border-radius:12px; border:1px solid #e5e7eb;" />
+      <div class="modal-actions">
+        <button class="btn-camera" id="captureBtn" onclick="captureFromModal()">📸 Capture</button>
+        <button class="btn-primary" id="usePhotoBtn" onclick="useCapturedPhoto()" style="display:none;">Use photo</button>
+        <button class="btn-camera" id="retakeBtn" onclick="retakePhoto()" style="display:none;">Retake</button>
+        <button class="btn-danger" onclick="closeCameraModal(true)">Close</button>
+      </div>
+      <div id="modalCameraStatus" style="font-size:12px; color:#6c757d;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="videoModal" class="modal-overlay" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Video</div>
+      <button class="btn-danger btn-icon" onclick="closeVideoModal(true)" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <video id="videoLive" autoplay playsinline muted style="width:100%; max-height:360px; border-radius:12px; border:1px solid #e5e7eb;"></video>
+      <video id="videoPreview" controls playsinline style="display:none; width:100%; max-height:360px; border-radius:12px; border:1px solid #e5e7eb;"></video>
+      <div class="modal-actions">
+        <button class="btn-camera" id="startVideoBtn" onclick="startVideoRecording()">⏺ Start</button>
+        <button class="btn-danger" id="stopVideoBtn" onclick="stopVideoRecording()" style="display:none;">⏹ Stop</button>
+        <button class="btn-primary" id="useVideoBtn" onclick="useRecordedVideo()" style="display:none;">Use clip</button>
+        <button class="btn-camera" id="retakeVideoBtn" onclick="retakeVideo()" style="display:none;">Retake</button>
+        <button class="btn-danger" onclick="closeVideoModal(true)">Close</button>
+      </div>
+      <div id="modalVideoStatus" style="font-size:12px; color:#6c757d;"></div>
+    </div>
+  </div>
+</div>
+
+  <div class="chat-footer">
+    <input id="query" placeholder="Message…" />
+    <button class="btn-primary" onclick="sendTextWithImage()">Send</button>
+    <button class="btn-camera" id="cameraBtn" onclick="toggleCamera()" title="Camera">
+      <span id="cameraIcon">Capture</span>
+    </button>
+    <button class="btn-whisper" id="whisperBtn" onclick="toggleWhisper()" title="Voice">
+      <span id="micIcon">Talk</span>
+      <span class="voice-indicator" id="voiceIndicator"></span>
+    </button>
+  </div>
+
+  <div class="transcript-box" id="transcriptBox" style="display: none;">
+    <strong>Live Transcript:</strong>
+    <div id="liveTranscript"></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Camera</h3>
+  <video id="video" autoplay playsinline width="300" style="display:none;"></video>
+  <p id="cameraStatus">Camera is off</p>
+
+  <button class="btn-camera" onclick="openCameraModal()">📸 Open Camera</button>
+  <button class="btn-camera" onclick="openVideoModal()">🎥 Video</button>
+  <button class="btn-danger" onclick="clearImage()">🗑 Clear</button>
+
+  <div id="capturedImageContainer" style="display:none;">
+    <h4>Captured Image</h4>
+    <img id="capturedImage" width="300" />
+    <canvas id="canvas" style="display:none;"></canvas>
+  </div>
+</div>
+
+<script>
+
+function normalizeSpokenIdentifiers(text) {
+  let t = (text || "").trim();
+  if (!t) return t;
+
+  const prefixes = ["FWD", "REV", "NDR", "EXC"];
+
+  for (const p of prefixes) {
+    const letters = p.split("").join("\\s*");
+    const re = new RegExp(`\\b${letters}\\b\\s*(?:-|—|–|dash|hyphen)?\\s*(\\d{2,})\\b`, "gi");
+    t = t.replace(re, (_, num) => {
+      let n = String(num || "").trim();
+      if (n.length === 3) n = `1${n}`;
+      return `${p}-${n}`;
+    });
+
+    const re2 = new RegExp(`\\b${p}\\b\\s*(\\d{2,})\\b`, "gi");
+    t = t.replace(re2, (_, num) => {
+      let n = String(num || "").trim();
+      if (n.length === 3) n = `1${n}`;
+      return `${p}-${n}`;
+    });
+  }
+
+  return t;
+}
+
+function _extractCanonicalIds(text) {
+  const t = (text || "");
+  const matches = t.match(/\b(?:FWD|REV|NDR|EXC)-\d+\b/gi);
+  return (matches || []).map(s => String(s).toUpperCase());
+}
+
+function _looksLikeTrackingMention(text) {
+  const t = (text || "").toLowerCase();
+  return /(f\s*w\s*d|r\s*e\s*v|n\s*d\s*r|e\s*x\s*c|\bfwd\b|\brev\b|\bndr\b|\bexc\b)/.test(t);
+}
+
+function _isYesLike(text) {
+  const t = (text || "").trim().toLowerCase();
+  return /^(yes|yeah|yep|correct|that's correct|right|confirm|confirmed|sure)$/.test(t);
+}
+
+let capturedImageData = null;
+let pendingCapturedImageData = null;
+let pendingImageFrames = [];
+
+let cameraStream = null;
+
+let videoStream = null;
+let videoRecorder = null;
+let videoChunks = [];
+let recordedVideoBlob = null;
+let recordedVideoUrl = null;
+let pendingRecordedVideoBlob = null;
+let pendingRecordedVideoUrl = null;
+let lastScannedCode = null;
+let recordedVideoFrames = null;
+
+let pendingReturnId = null;
+
+let wsClient = null;
+let wsPending = {};
+let wsDisabled = false;
+
+let timelineSeen = new Set();
+
+function resetTimelineSeen() {
+  timelineSeen = new Set();
+}
+
+function getWsUrl() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${location.host}/ws/query/`;
+}
+
+function ensureWebSocket() {
+  if (wsDisabled) return null;
+  if (wsClient && (wsClient.readyState === WebSocket.OPEN || wsClient.readyState === WebSocket.CONNECTING)) {
+    return wsClient;
+  }
+
+  try {
+    wsClient = new WebSocket(getWsUrl());
+  } catch (e) {
+    wsDisabled = true;
+    wsClient = null;
+    return null;
+  }
+
+  wsClient.onmessage = (ev) => {
+    let msg = null;
+    try { msg = JSON.parse(ev.data); } catch (e) { msg = null; }
+    if (!msg) return;
+
+    const rid = msg.request_id;
+    const ctx = rid ? wsPending[rid] : null;
+    if (!ctx) return;
+
+    if (msg.type === 'trace_step') {
+      renderTimeline([msg.step]);
+      return;
+    }
+
+    if (msg.type === 'final') {
+      delete wsPending[rid];
+      ctx.resolve(msg.response);
+      return;
+    }
+
+    if (msg.type === 'error') {
+      delete wsPending[rid];
+      ctx.reject(new Error(msg.error || 'WebSocket error'));
+    }
+  };
+
+  wsClient.onclose = () => {
+    wsClient = null;
+  };
+
+  wsClient.onerror = () => {
+    // Disable WS for this page session and fall back to HTTP.
+    wsDisabled = true;
+    try { wsClient.close(); } catch (e) {}
+    wsClient = null;
+  };
+
+  return wsClient;
+}
+
+function wsQuery(query, userEmail) {
+  const ws = ensureWebSocket();
+  if (!ws) return null;
+
+  const requestId = (crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : String(Date.now()) + Math.random().toString(16).slice(2);
+
+  return new Promise((resolve, reject) => {
+    wsPending[requestId] = { resolve, reject };
+    const payload = { request_id: requestId, query: query, user_email: userEmail };
+
+    const sendNow = () => {
+      try {
+        ws.send(JSON.stringify(payload));
+      } catch (e) {
+        delete wsPending[requestId];
+        reject(e);
+      }
+    };
+
+    if (ws.readyState === WebSocket.OPEN) {
+      sendNow();
+    } else {
+      ws.addEventListener('open', sendNow, { once: true });
+      ws.addEventListener('error', () => {
+        wsDisabled = true;
+        delete wsPending[requestId];
+        reject(new Error('WebSocket failed'));
+      }, { once: true });
+    }
+  });
+}
+
+function appendMessage(role, text, opts = {}) {
+  const chat = document.getElementById("chatHistory");
+  if (!chat) return null;
+
+  const msg = document.createElement("div");
+  msg.className = `msg ${role}`;
+  if (opts.className) msg.classList.add(opts.className);
+  if (opts.typing) msg.classList.add("typing");
+  if (opts.html) {
+    msg.innerHTML = text;
+  } else {
+    msg.textContent = text;
+  }
+  chat.appendChild(msg);
+
+  chat.scrollTop = chat.scrollHeight;
+  return msg;
+}
+
+function safeRevokeObjectURL(url) {
+  const u = (url || "").trim();
+  if (!u) return;
+  // Delay to avoid revoking while the browser is still fetching/decoding.
+  setTimeout(() => {
+    try {
+      const nodes = Array.from(document.querySelectorAll('img,video,audio,source'));
+      const inUse = nodes.some(el => {
+        const src = el.currentSrc || el.src || el.getAttribute('src') || '';
+        return src === u;
+      });
+      if (!inUse) {
+        URL.revokeObjectURL(u);
+      }
+    } catch (e) {
+      try { URL.revokeObjectURL(u); } catch (e2) {}
+    }
+  }, 1000);
+}
+
+let pendingConfirmToken = null;
+
+function showConfirmUI(token) {
+  pendingConfirmToken = token;
+
+  const safeId = String(token || "").replace(/[^A-Za-z0-9_-]/g, "");
+  const confirmId = `confirmBtn_${safeId}`;
+  const cancelId = `cancelBtn_${safeId}`;
+
+  const html = `
+    <div class="confirm-card">
+      <div class="hint">Review looks good?</div>
+      <div class="confirm-actions">
+        <button id="${confirmId}" class="btn-primary">Confirm</button>
+        <button id="${cancelId}" class="btn-danger">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  const node = appendMessage('system', html, { html: true, className: 'confirm-bubble' });
+  if (!node) return;
+
+  // Wire buttons
+  setTimeout(() => {
+    const c = document.getElementById(confirmId);
+    const x = document.getElementById(cancelId);
+
+    if (c) {
+      c.onclick = async () => {
+        if (!pendingConfirmToken) return;
+        const tok = pendingConfirmToken;
+        pendingConfirmToken = null;
+        appendMessage('user', 'Confirm');
+        await sendTextDirect(`confirm ${tok}`);
+      };
+    }
+
+    if (x) {
+      x.onclick = () => {
+        pendingConfirmToken = null;
+        appendMessage('system', 'Okay — cancelled. No changes were made.');
+      };
+    }
+  }, 0);
+}
+
+async function sendTextDirect(rawText) {
+  resetTimelineSeen();
+  setTyping(true);
+  try {
+    const res = await fetch("/api/query/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: rawText,
+        user_email: "test@omni.com",
+        image: capturedImageData
+      })
+    });
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      data = null;
+    }
+
+    if (!res.ok) {
+      const errMsg = data?.error || `Request failed (${res.status})`;
+      throw new Error(errMsg);
+    }
+
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+
+    setTyping(false);
+
+    const trace = data?.response?.decision_trace || [];
+    renderTimeline(trace);
+
+    const answer = data?.response?.answer;
+    if (answer) {
+      appendMessage("assistant", answer);
+    } else {
+      appendMessage("system", "No response from server.");
+    }
+
+    if (answer) {
+      await speakText(answer);
+    }
+  } catch (err) {
+    setTyping(false);
+    const msg = err && err.message ? err.message : "Sorry — I hit a server error while answering that.";
+    appendMessage("system", `Request failed. ${msg}`);
+  }
+}
+
+function setTyping(isTyping) {
+  const existing = document.getElementById("typingMsg");
+  if (isTyping) {
+    if (existing) return existing;
+    const m = appendMessage("system", "Typing…", { typing: true });
+    if (m) m.id = "typingMsg";
+    return m;
+  }
+  if (existing) existing.remove();
+  return null;
+}
+
+function renderTimeline(trace) {
+  if (!Array.isArray(trace) || trace.length === 0) return;
+
+  const SHOW_INTERNAL_TRACE = false;
+
+  function mapStep(agent, reason) {
+    const a = String(agent || "").trim();
+    const r = String(reason || "").trim();
+    if (!a && !r) return "";
+    if (a && r) return `${a}: ${r}`;
+    return a || r;
+  }
+
+  function statusTextFromTraceStep(step) {
+    const a = (step?.agent || "").toLowerCase();
+    const r = (step?.reason || "").toLowerCase();
+
+    if (a.includes("shopcore") || r.includes("order") || r.includes("product") || r.includes("user")) {
+      return "";
+    }
+    if (a.includes("shipstream") || r.includes("shipment") || r.includes("tracking") || r.includes("return") || r.includes("refund") || r.includes("ndr") || r.includes("exchange")) {
+      return "";
+    }
+    if (a.includes("payguard") || r.includes("payment") || r.includes("wallet")) {
+      return "";
+    }
+    if (a.includes("caredesk") || r.includes("ticket") || r.includes("support")) {
+      return "";
+    }
+    if (a.includes("vision")) {
+      return "Analyzing the image…";
+    }
+    return "";
+  };
+
+  for (const item of trace) {
+    const reason = (item?.reason || "").toLowerCase();
+    if (reason.startsWith("skipped")) continue;
+    const step = mapStep(item?.agent, item?.reason);
+    if (!step) continue;
+    if (timelineSeen.has(step)) continue;
+    timelineSeen.add(step);
+    if (SHOW_INTERNAL_TRACE) {
+      appendMessage('system', step);
+    }
+  }
+}
+
+async function startCamera() {
+  const video = document.getElementById("video");
+  const status = document.getElementById("cameraStatus");
+  const cameraIcon = document.getElementById("cameraIcon");
+
+  if (cameraStream) return;
+
+  try {
+    const host = location.hostname;
+    const isLocalhost = host === "localhost" || host === "127.0.0.1";
+    if (location.protocol !== "https:" && !isLocalhost) {
+      throw new Error("Camera requires HTTPS (except on localhost/127.0.0.1)");
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    cameraStream = stream;
+    video.srcObject = stream;
+    video.style.display = "block";
+    status.innerText = "Camera active";
+    status.style.color = "green";
+    if (cameraIcon) cameraIcon.textContent = "⏹️";
+  } catch (err) {
+    const errName = err && err.name ? err.name : "Error";
+    const errMsg = err && err.message ? err.message : String(err);
+    status.innerText = `Camera unavailable: ${errName} - ${errMsg}`;
+    status.style.color = "red";
+  }
+}
+
+function stopCamera() {
+  const video = document.getElementById("video");
+  const status = document.getElementById("cameraStatus");
+  const cameraIcon = document.getElementById("cameraIcon");
+
+  if (cameraStream) {
+    try {
+      cameraStream.getTracks().forEach(t => t.stop());
+    } catch (e) {
+    }
+  }
+  cameraStream = null;
+  video.srcObject = null;
+  video.style.display = "none";
+  status.innerText = "Camera is off";
+  status.style.color = "#6c757d";
+  if (cameraIcon) cameraIcon.textContent = "📷";
+}
+
+function toggleCamera() {
+  openCameraModal();
+}
+
+async function openCameraModal() {
+  const modal = document.getElementById("cameraModal");
+  const status = document.getElementById("modalCameraStatus");
+  pendingCapturedImageData = null;
+
+  if (!modal) {
+    const s = document.getElementById("cameraStatus");
+    if (s) s.textContent = "Camera modal is missing in the page.";
+    return;
+  }
+
+  const pv = document.getElementById("modalPreview");
+  const vv = document.getElementById("modalVideo");
+  const useBtn = document.getElementById("usePhotoBtn");
+  const retakeBtn = document.getElementById("retakeBtn");
+  const capBtn = document.getElementById("captureBtn");
+  if (pv) pv.style.display = "none";
+  if (vv) vv.style.display = "block";
+  if (useBtn) useBtn.style.display = "none";
+  if (retakeBtn) retakeBtn.style.display = "none";
+  if (capBtn) capBtn.style.display = "inline-flex";
+
+  modal.style.display = "flex";
+  if (status) status.textContent = "";
+  try {
+    await startCameraModal();
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    if (status) status.textContent = `Camera failed to start: ${msg}`;
+  }
+}
+
+async function openVideoModal() {
+  const modal = document.getElementById("videoModal");
+  const status = document.getElementById("modalVideoStatus");
+
+  pendingRecordedVideoBlob = null;
+  pendingRecordedVideoUrl = null;
+  lastScannedCode = null;
+
+  const live = document.getElementById("videoLive");
+  const preview = document.getElementById("videoPreview");
+  const startBtn = document.getElementById("startVideoBtn");
+  const stopBtn = document.getElementById("stopVideoBtn");
+  const useBtn = document.getElementById("useVideoBtn");
+  const retakeBtn = document.getElementById("retakeVideoBtn");
+
+  if (live) live.style.display = "block";
+  if (preview) preview.style.display = "none";
+  if (startBtn) startBtn.style.display = "inline-flex";
+  if (stopBtn) stopBtn.style.display = "none";
+  if (useBtn) useBtn.style.display = "none";
+  if (retakeBtn) retakeBtn.style.display = "none";
+  if (status) status.textContent = "";
+
+  modal.style.display = "flex";
+  await startVideoStream();
+}
+
+async function startVideoStream() {
+  const live = document.getElementById("videoLive");
+  const status = document.getElementById("modalVideoStatus");
+
+  try {
+    const host = (location.hostname || "").toLowerCase();
+    const isLocalhost = host === "localhost" || host === "127.0.0.1";
+    if (location.protocol !== "https:" && !isLocalhost) {
+      throw new Error("Camera requires HTTPS (except on localhost/127.0.0.1)");
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true,
+    });
+    videoStream = stream;
+    if (live) live.srcObject = stream;
+  } catch (err) {
+    const errName = err && err.name ? err.name : "Error";
+    const errMsg = err && err.message ? err.message : String(err);
+    if (status) status.textContent = `Video unavailable: ${errName} - ${errMsg}`;
+  }
+}
+
+function stopVideoStream() {
+  if (videoStream) {
+    videoStream.getTracks().forEach(t => t.stop());
+  }
+  videoStream = null;
+  const live = document.getElementById("videoLive");
+  if (live) live.srcObject = null;
+}
+
+function closeVideoModal(discardPending = false) {
+  const modal = document.getElementById("videoModal");
+  modal.style.display = "none";
+
+  if (videoRecorder && videoRecorder.state !== "inactive") {
+    try { videoRecorder.stop(); } catch (e) {}
+  }
+  videoRecorder = null;
+  videoChunks = [];
+
+  if (discardPending) {
+    pendingRecordedVideoBlob = null;
+    if (pendingRecordedVideoUrl) {
+      safeRevokeObjectURL(pendingRecordedVideoUrl);
+    }
+    pendingRecordedVideoUrl = null;
+  }
+
+  stopVideoStream();
+}
+
+function startVideoRecording() {
+  const status = document.getElementById("modalVideoStatus");
+  const startBtn = document.getElementById("startVideoBtn");
+  const stopBtn = document.getElementById("stopVideoBtn");
+  const useBtn = document.getElementById("useVideoBtn");
+  const retakeBtn = document.getElementById("retakeVideoBtn");
+  const preview = document.getElementById("videoPreview");
+  const live = document.getElementById("videoLive");
+
+  if (!videoStream) {
+    if (status) status.textContent = "Turn on video first.";
+    return;
+  }
+
+  pendingRecordedVideoBlob = null;
+  if (pendingRecordedVideoUrl) {
+    safeRevokeObjectURL(pendingRecordedVideoUrl);
+  }
+  pendingRecordedVideoUrl = null;
+
+  if (preview) preview.style.display = "none";
+  if (live) live.style.display = "block";
+  if (useBtn) useBtn.style.display = "none";
+  if (retakeBtn) retakeBtn.style.display = "none";
+
+  const preferredTypes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+  const chosenType = preferredTypes.find(t => (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t))) || '';
+
+  try {
+    videoRecorder = chosenType
+      ? new MediaRecorder(videoStream, { mimeType: chosenType })
+      : new MediaRecorder(videoStream);
+  } catch (e) {
+    if (status) status.textContent = "Video recording is not supported in this browser.";
+    return;
+  }
+
+  videoChunks = [];
+
+  videoRecorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) {
+      videoChunks.push(event.data);
+    }
+  };
+
+  videoRecorder.onstop = async () => {
+    pendingRecordedVideoBlob = new Blob(videoChunks, { type: videoRecorder.mimeType || 'video/webm' });
+    videoChunks = [];
+    if (pendingRecordedVideoUrl) {
+      safeRevokeObjectURL(pendingRecordedVideoUrl);
+    }
+    pendingRecordedVideoUrl = URL.createObjectURL(pendingRecordedVideoBlob);
+
+    const previewEl = document.getElementById("videoPreview");
+    if (previewEl) {
+      previewEl.src = pendingRecordedVideoUrl;
+      previewEl.style.display = "block";
+    }
+    const liveEl = document.getElementById("videoLive");
+    if (liveEl) liveEl.style.display = "none";
+
+    const useBtn2 = document.getElementById("useVideoBtn");
+    const retakeBtn2 = document.getElementById("retakeVideoBtn");
+    if (useBtn2) useBtn2.style.display = "inline-flex";
+    if (retakeBtn2) retakeBtn2.style.display = "inline-flex";
+    if (status) status.textContent = "Clip ready. You can also scan for a tracking/QR code.";
+
+    try {
+      const code = await tryScanRecordedVideo(pendingRecordedVideoBlob);
+      if (code) {
+        lastScannedCode = code;
+        if (status) status.textContent = `Detected code: ${code}`;
+        const input = document.getElementById("query");
+        if (input && !input.value.trim()) {
+          input.value = `Track this shipment: ${code}`;
+        }
+      }
+    } catch (e) {
+    }
+  };
+
+  try {
+    videoRecorder.start();
+    if (status) status.textContent = "Recording… (stop after ~5–10 seconds)";
+    if (startBtn) startBtn.style.display = "none";
+    if (stopBtn) stopBtn.style.display = "inline-flex";
+  } catch (e) {
+    if (status) status.textContent = "Could not start recording.";
+  }
+}
+
+function stopVideoRecording() {
+  const status = document.getElementById("modalVideoStatus");
+  const startBtn = document.getElementById("startVideoBtn");
+  const stopBtn = document.getElementById("stopVideoBtn");
+
+  if (!videoRecorder || videoRecorder.state === "inactive") {
+    if (status) status.textContent = "Not recording.";
+    return;
+  }
+
+  try {
+    videoRecorder.stop();
+  } catch (e) {
+  }
+
+  if (startBtn) startBtn.style.display = "inline-flex";
+  if (stopBtn) stopBtn.style.display = "none";
+}
+
+function retakeVideo() {
+  pendingRecordedVideoBlob = null;
+  if (pendingRecordedVideoUrl) {
+    safeRevokeObjectURL(pendingRecordedVideoUrl);
+  }
+  pendingRecordedVideoUrl = null;
+  lastScannedCode = null;
+  recordedVideoFrames = null;
+
+  const live = document.getElementById("videoLive");
+  const preview = document.getElementById("videoPreview");
+  const useBtn = document.getElementById("useVideoBtn");
+  const retakeBtn = document.getElementById("retakeVideoBtn");
+  const status = document.getElementById("modalVideoStatus");
+
+  if (preview) preview.style.display = "none";
+  if (live) live.style.display = "block";
+  if (useBtn) useBtn.style.display = "none";
+  if (retakeBtn) retakeBtn.style.display = "none";
+  if (status) status.textContent = "";
+}
+
+function useRecordedVideo() {
+  if (!pendingRecordedVideoBlob || !pendingRecordedVideoUrl) return;
+
+  recordedVideoBlob = pendingRecordedVideoBlob;
+  recordedVideoUrl = pendingRecordedVideoUrl;
+
+  // Extract frames now so the next request can include them as image_frames.
+  // This is how the backend can "process video" (via key frames) without uploading large files.
+  (async () => {
+    try {
+      recordedVideoFrames = await extractFrameDataUrlsFromVideoBlob(recordedVideoBlob, 4);
+    } catch (e) {
+      recordedVideoFrames = null;
+    }
+  })();
+
+  pendingRecordedVideoBlob = null;
+  pendingRecordedVideoUrl = null;
+
+  appendMessage('user', `<video controls playsinline style="max-width:240px; border-radius:12px; border:1px solid rgba(255,255,255,0.35);" src="${recordedVideoUrl}"></video>`, { html: true });
+
+  closeVideoModal();
+}
+
+async function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (e) => reject(e);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function extractFrameDataUrlsFromVideoBlob(videoBlob, frameCount = 3) {
+  const url = URL.createObjectURL(videoBlob);
+  const video = document.createElement('video');
+  video.src = url;
+  video.muted = true;
+  video.playsInline = true;
+
+  await new Promise((resolve, reject) => {
+    video.onloadedmetadata = () => resolve();
+    video.onerror = (e) => reject(e);
+  });
+
+  const duration = video.duration || 0;
+  const times = [];
+  if (duration > 0) {
+    for (let i = 1; i <= frameCount; i++) {
+      times.push((duration * i) / (frameCount + 1));
+    }
+  } else {
+    times.push(0);
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext('2d');
+
+  const frames = [];
+  for (const t of times) {
+    await new Promise((resolve) => {
+      const handler = () => {
+        try {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          frames.push(canvas.toDataURL('image/jpeg', 0.8));
+        } catch (e) {
+        }
+        resolve();
+      };
+      video.onseeked = handler;
+      try {
+        video.currentTime = Math.min(Math.max(t, 0), Math.max(duration - 0.1, 0));
+      } catch (e) {
+        handler();
+      }
+    });
+  }
+
+  try { safeRevokeObjectURL(url); } catch (e) {}
+  return frames;
+}
+
+async function tryScanRecordedVideo(videoBlob) {
+  if (!('BarcodeDetector' in window)) return null;
+
+  let detector = null;
+  try {
+    detector = new BarcodeDetector({ formats: ['qr_code', 'code_128', 'ean_13', 'ean_8', 'upc_a', 'upc_e'] });
+  } catch (e) {
+    detector = new BarcodeDetector();
+  }
+
+  const frames = await extractFrameDataUrlsFromVideoBlob(videoBlob, 4);
+  for (const dataUrl of frames) {
+    try {
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const bmp = await createImageBitmap(blob);
+      const results = await detector.detect(bmp);
+      if (results && results.length > 0) {
+        const raw = results[0].rawValue;
+        if (raw && String(raw).trim()) return String(raw).trim();
+      }
+    } catch (e) {
+    }
+  }
+  return null;
+}
+
+async function startCameraModal() {
+  const video = document.getElementById("modalVideo");
+  const status = document.getElementById("modalCameraStatus");
+
+  if (!video) {
+    if (status) status.textContent = "Camera preview element is missing.";
+    return;
+  }
+
+  if (cameraStream) {
+    video.srcObject = cameraStream;
+    try { await video.play(); } catch (e) {}
+    return;
+  }
+
+  try {
+    const host = location.hostname;
+    const isLocalhost = host === "localhost" || host === "127.0.0.1";
+    if (location.protocol !== "https:" && !isLocalhost) {
+      throw new Error("Camera requires HTTPS (except on localhost/127.0.0.1)");
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false,
+    });
+    cameraStream = stream;
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) {
+      // Some browsers require a user gesture; modal open click counts, but just in case.
+    }
+  } catch (err) {
+    const errName = err && err.name ? err.name : "Error";
+    const errMsg = err && err.message ? err.message : String(err);
+    if (status) status.textContent = `Camera unavailable: ${errName} - ${errMsg}`;
+    const s = document.getElementById("cameraStatus");
+    if (s) s.textContent = `Camera unavailable: ${errName} - ${errMsg}`;
+  }
+}
+
+function closeCameraModal(discardPending = false) {
+  const modal = document.getElementById("cameraModal");
+  modal.style.display = "none";
+  if (discardPending) pendingCapturedImageData = null;
+  stopCamera();
+}
+
+function captureFromModal() {
+  const video = document.getElementById("modalVideo");
+  const canvas = document.getElementById("canvas");
+  const status = document.getElementById("cameraStatus");
+  const modalStatus = document.getElementById("modalCameraStatus");
+  const preview = document.getElementById("modalPreview");
+  const useBtn = document.getElementById("usePhotoBtn");
+  const retakeBtn = document.getElementById("retakeBtn");
+  const capBtn = document.getElementById("captureBtn");
+
+  if (!cameraStream || !video.srcObject) {
+    status.innerText = "Turn on the camera first.";
+    status.style.color = "#6c757d";
+    return;
+  }
+
+  if (!video.videoWidth || !video.videoHeight) {
+    status.innerText = "Camera is starting… try again in a second.";
+    status.style.color = "#6c757d";
+    return;
+  }
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+
+  pendingCapturedImageData = canvas.toDataURL("image/jpeg", 0.8);
+  if (preview) {
+    preview.src = pendingCapturedImageData;
+    preview.style.display = "block";
+  }
+  if (video) video.style.display = "none";
+  if (useBtn) useBtn.style.display = "inline-flex";
+  if (retakeBtn) retakeBtn.style.display = "inline-flex";
+  if (capBtn) capBtn.style.display = "none";
+  if (modalStatus) modalStatus.textContent = "Looks good? Click Use photo to attach it.";
+}
+
+function retakePhoto() {
+  pendingCapturedImageData = null;
+  const preview = document.getElementById("modalPreview");
+  const video = document.getElementById("modalVideo");
+  const useBtn = document.getElementById("usePhotoBtn");
+  const retakeBtn = document.getElementById("retakeBtn");
+  const capBtn = document.getElementById("captureBtn");
+  const modalStatus = document.getElementById("modalCameraStatus");
+
+  if (preview) preview.style.display = "none";
+  if (video) video.style.display = "block";
+  if (useBtn) useBtn.style.display = "none";
+  if (retakeBtn) retakeBtn.style.display = "none";
+  if (capBtn) capBtn.style.display = "inline-flex";
+  if (modalStatus) modalStatus.textContent = "";
+}
+
+function useCapturedPhoto() {
+  const status = document.getElementById("cameraStatus");
+  const img = document.getElementById("capturedImage");
+  if (!pendingCapturedImageData) return;
+
+  capturedImageData = pendingCapturedImageData;
+  pendingCapturedImageData = null;
+
+  if (img) img.src = capturedImageData;
+  document.getElementById("capturedImageContainer").style.display = "block";
+  status.innerText = "Captured image ready to send.";
+  status.style.color = "green";
+
+  // Insert the image into the chat as a user bubble (no text required).
+  appendMessage('user', `<img src="${capturedImageData}" alt="Captured" />`, { html: true });
+
+  closeCameraModal();
+}
+
+window.addEventListener("load", () => {
+  // Clear UI-only memory on reload (chat bubbles, pending media), but keep backend session/cookies.
+  try {
+    const chat = document.getElementById("chatHistory");
+    if (chat) chat.innerHTML = "";
+  } catch (e) {}
+
+  try {
+    pendingReturnId = null;
+    capturedImageData = null;
+    pendingCapturedImageData = null;
+    recordedVideoFrames = null;
+    lastScannedCode = null;
+    resetTimelineSeen();
+
+    const img = document.getElementById("capturedImage");
+    if (img) img.src = "";
+    const c = document.getElementById("capturedImageContainer");
+    if (c) c.style.display = "none";
+  } catch (e) {}
+
+  // Trigger the first assistant message from the backend (empty query → greeting)
+  setTimeout(() => {
+    sendTextDirect("");
+  }, 50);
+});
+
+function captureImage() {
+  // Backwards compatibility: capture now happens in the modal.
+  openCameraModal();
+}
+
+function clearImage() {
+  capturedImageData = null;
+  document.getElementById("capturedImageContainer").style.display = "none";
+}
+
+async function sendTextWithImage() {
+  const query = document.getElementById("query").value;
+  const q = (query || "").trim();
+  const hasImage = !!capturedImageData;
+  const hasVideoFrames = Array.isArray(recordedVideoFrames) && recordedVideoFrames.length > 0;
+  if (!q && !hasImage && !hasVideoFrames) return;
+
+  resetTimelineSeen();
+
+  if (q) {
+    appendMessage("user", q);
+  }
+  document.getElementById("query").value = "";
+  setTyping(true);
+
+  // === DIAGNOSTIC LOGS ===
+  console.log("[sendTextWithImage] START", {
+    query: q,
+    hasImage,
+    hasVideoFrames,
+    capturedImageDataLength: capturedImageData ? capturedImageData.length : 0,
+    recordedVideoFramesCount: hasVideoFrames ? recordedVideoFrames.length : 0,
+  });
+
+  try {
+    // WebSocket bonus: use WS for text-only messages. If WS fails, silently fall back to HTTP.
+    if (!hasImage && !hasVideoFrames && q) {
+      const wsPromise = wsQuery(q, "test@omni.com");
+      if (wsPromise) {
+        try {
+          const wsResult = await wsPromise;
+          setTyping(false);
+
+          const trace = wsResult?.decision_trace || [];
+          renderTimeline(trace);
+
+          const answer = wsResult?.answer;
+          if (answer) {
+            appendMessage("assistant", answer);
+          } else {
+            appendMessage("system", "No response from server.");
+          }
+
+          if (wsResult?.write_preview?.confirm_token) {
+            const tok = wsResult.write_preview.confirm_token;
+            showConfirmUI(tok);
+          }
+
+          if (answer) {
+            await speakText(answer);
+          }
+          return;
+        } catch (e) {
+          // silent fallback to HTTP
+        }
+      }
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      try { controller.abort(); } catch (e) {}
+    }, 30000);
+
+    const payload = {
+      query: q,
+      user_email: "test@omni.com",
+      reference_id: (!q && pendingReturnId) ? pendingReturnId : null,
+      image: capturedImageData,
+      image_frames: hasVideoFrames ? recordedVideoFrames : null
+    };
+    console.log("[sendTextWithImage] PAYLOAD KEYS", Object.keys(payload));
+    console.log("[sendTextWithImage] PAYLOAD IMAGE SIZE", payload.image ? payload.image.length : 0);
+    console.log("[sendTextWithImage] PAYLOAD FRAMES COUNT", Array.isArray(payload.image_frames) ? payload.image_frames.length : 0);
+
+    const res = await fetch("/api/query/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify(payload)
+    });
+
+    clearTimeout(timeoutId);
+    console.log("[sendTextWithImage] RESPONSE STATUS", res.status, res.statusText);
+
+    let data = null;
+    try {
+      data = await res.json();
+      console.log("[sendTextWithImage] RESPONSE DATA", data);
+    } catch (e) {
+      console.error("[sendTextWithImage] JSON PARSE ERROR", e);
+      data = null;
+    }
+
+    if (!res.ok) {
+      const errMsg = data?.error || `Request failed (${res.status})`;
+      console.error("[sendTextWithImage] HTTP ERROR", errMsg);
+      throw new Error(errMsg);
+    }
+
+    if (data?.error) {
+      console.error("[sendTextWithImage] API ERROR", data.error);
+      throw new Error(data.error);
+    }
+
+    setTyping(false);
+
+    const trace = data?.response?.decision_trace || [];
+    renderTimeline(trace);
+
+    if (data?.response?.needs_image && data?.response?.reference_id) {
+      pendingReturnId = String(data.response.reference_id || "").trim().toUpperCase() || null;
+      console.log("[sendTextWithImage] pendingReturnId set", pendingReturnId);
+    }
+
+    if (data?.response?.ticket_id || data?.response?.reverse_number) {
+      pendingReturnId = null;
+      console.log("[sendTextWithImage] pendingReturnId cleared (return created)");
+    }
+
+    const answer = data?.response?.answer;
+    console.log("[sendTextWithImage] FINAL ANSWER", answer);
+    if (answer) {
+      appendMessage("assistant", answer);
+    } else {
+      appendMessage("system", "No response from server.");
+    }
+
+    if (data?.response?.write_preview?.confirm_token) {
+      const tok = data.response.write_preview.confirm_token;
+      showConfirmUI(tok);
+    }
+
+    if (answer) {
+      await speakText(answer);
+    }
+  } catch (err) {
+    console.error("[sendTextWithImage] TOP-LEVEL ERROR", err);
+    setTyping(false);
+    const msg = err && err.message ? err.message : "Sorry — I hit a server error while answering that.";
+    appendMessage("system", `Request failed. ${msg}`);
+  }
+}
+
+let whisperActive = false;
+let mediaRecorder = null;
+let audioChunks = [];
+let recognition = null;
+let isProcessing = false;
+let recorderIntervalId = null;
+let voiceStream = null;
+let isAssistantSpeaking = false;
+let discardNextRecording = false;
+
+let srBuffer = "";
+let srDebounceTimerId = null;
+
+let pendingVoiceIdConfirm = null;
+
+let vadAudioCtx = null;
+let vadAnalyser = null;
+let vadSource = null;
+let vadIntervalId = null;
+let vadLastVoiceAt = 0;
+let vadLastFlushAt = 0;
+
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = (event) => {
+    if (!whisperActive || isProcessing) return;
+
+    // Accumulate final segments and only submit after a short pause.
+    // This prevents "short sentence" behavior where only the first clause is processed.
+    const current = event.resultIndex;
+    const res = event.results[current];
+    if (!res || !res[0]) return;
+
+    const transcript = (res[0].transcript || "").trim();
+    if (!transcript) return;
+
+    if (res.isFinal) {
+      srBuffer = (srBuffer ? (srBuffer + " ") : "") + transcript;
+
+      if (srDebounceTimerId) {
+        clearTimeout(srDebounceTimerId);
+        srDebounceTimerId = null;
+      }
+
+      srDebounceTimerId = setTimeout(async () => {
+        const finalText = (srBuffer || "").trim();
+        srBuffer = "";
+        if (!finalText) return;
+        const cleaned = normalizeSpokenIdentifiers(finalText);
+        addTranscript(cleaned, 'user');
+        await processVoiceInput(cleaned);
+      }, 1400);
+    }
+  };
+
+  recognition.onerror = (event) => {
+    console.error('Speech recognition error:', event.error);
+    updateStatus('Microphone error: ' + event.error, 'error');
+  };
+
+  recognition.onend = () => {
+    if (whisperActive && !isProcessing) {
+      setTimeout(() => {
+        if (whisperActive) {
+          recognition.start();
+        }
+      }, 100);
+    }
+  };
+}
+
+async function toggleWhisper() {
+  whisperActive ? stopWhisper("user") : startWhisper();
+}
+
+async function startWhisper() {
+  const btn = document.getElementById("whisperBtn");
+  const micIcon = document.getElementById("micIcon");
+  const indicator = document.getElementById("voiceIndicator");
+  const transcriptBox = document.getElementById("transcriptBox");
+  const liveTranscript = document.getElementById("liveTranscript");
+
+  if (whisperActive) return;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        sampleRate: 16000
+      }
+    });
+
+    voiceStream = stream;
+
+    whisperActive = true;
+    if (micIcon) micIcon.textContent = "Stop";
+    btn.classList.remove("btn-whisper");
+    btn.classList.add("btn-danger");
+    indicator.classList.add("listening");
+    transcriptBox.style.display = "block";
+    liveTranscript.innerHTML = "";
+    addTranscript("Call started — I’m listening.", "system");
+
+    // Prefer browser SpeechRecognition for long sentences (more stable than chunking Whisper).
+    // Whisper remains as a fallback if SpeechRecognition is unavailable.
+    if (recognition) {
+      try {
+        recognition.start();
+      } catch (e) {
+      }
+    }
+
+    const preferredTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg'
+    ];
+    const chosenType = preferredTypes.find(t => (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t))) || '';
+
+    mediaRecorder = chosenType
+      ? new MediaRecorder(stream, { mimeType: chosenType })
+      : new MediaRecorder(stream);
+
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+
+    mediaRecorder.onstop = () => {
+      if (discardNextRecording) {
+        discardNextRecording = false;
+        audioChunks = [];
+        return;
+      }
+      if (audioChunks.length > 0) {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioChunks = [];
+        processAudioWithWhisper(audioBlob);
+      }
+    };
+
+    mediaRecorder.onerror = (e) => {
+      console.error('MediaRecorder error:', e);
+      updateStatus('Microphone recording error', 'error');
+    };
+
+    // Record continuously. We only stop the recorder when you press Stop.
+    // The previous stop/start loop caused speech to be cut into fragments.
+    mediaRecorder.start(1000);
+
+    // Only run VAD-based Whisper flushing when SpeechRecognition is not available.
+    if (!recognition) try {
+      vadAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      vadAnalyser = vadAudioCtx.createAnalyser();
+      vadAnalyser.fftSize = 2048;
+      vadSource = vadAudioCtx.createMediaStreamSource(stream);
+      vadSource.connect(vadAnalyser);
+
+      vadLastVoiceAt = Date.now();
+      vadLastFlushAt = 0;
+
+      if (vadIntervalId) {
+        clearInterval(vadIntervalId);
+      }
+
+      vadIntervalId = setInterval(() => {
+        if (!whisperActive || !vadAnalyser) return;
+        if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+        if (isAssistantSpeaking) return;
+
+        const buf = new Uint8Array(vadAnalyser.fftSize);
+        vadAnalyser.getByteTimeDomainData(buf);
+
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / buf.length);
+
+        const now = Date.now();
+        const isVoice = rms > 0.02;
+        if (isVoice) {
+          vadLastVoiceAt = now;
+          return;
+        }
+
+        const silenceMs = now - (vadLastVoiceAt || now);
+        if (silenceMs < 1800) return;
+        if (isProcessing) return;
+        if (!audioChunks || audioChunks.length === 0) return;
+
+        // Only flush when we have enough buffered audio; this prevents very short/partial transcriptions.
+        const bufferedBytes = audioChunks.reduce((acc, b) => acc + (b?.size || 0), 0);
+        if (bufferedBytes < 20000) return;
+
+        // Avoid rapid successive flushes.
+        if (vadLastFlushAt && (now - vadLastFlushAt) < 1500) return;
+        vadLastFlushAt = now;
+
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioChunks = [];
+        processAudioWithWhisper(audioBlob);
+      }, 250);
+    } catch (e) {
+      vadAudioCtx = null;
+      vadAnalyser = null;
+      vadSource = null;
+      vadIntervalId = null;
+    }
+
+  } catch (err) {
+    console.error('Error starting voice:', err);
+    updateStatus('Microphone access denied', 'error');
+  }
+}
+
+function stopWhisper(reason = "user") {
+  const btn = document.getElementById("whisperBtn");
+  const micIcon = document.getElementById("micIcon");
+  const indicator = document.getElementById("voiceIndicator");
+
+  whisperActive = false;
+  isAssistantSpeaking = false;
+  discardNextRecording = false;
+  pendingVoiceIdConfirm = null;
+
+  if (srDebounceTimerId) {
+    clearTimeout(srDebounceTimerId);
+    srDebounceTimerId = null;
+  }
+  srBuffer = "";
+
+  if (recorderIntervalId) {
+    clearInterval(recorderIntervalId);
+    recorderIntervalId = null;
+  }
+
+  if (vadIntervalId) {
+    clearInterval(vadIntervalId);
+    vadIntervalId = null;
+  }
+  if (vadAudioCtx) {
+    try { vadAudioCtx.close(); } catch (e) {}
+  }
+  vadAudioCtx = null;
+  vadAnalyser = null;
+  vadSource = null;
+  vadLastVoiceAt = 0;
+
+  if (micIcon) micIcon.textContent = "Talk";
+  btn.classList.remove("btn-danger");
+  btn.classList.add("btn-whisper");
+  indicator.classList.remove("listening", "processing", "speaking");
+
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try {
+      mediaRecorder.stop();
+    } catch (e) {
+    }
+  }
+  mediaRecorder = null;
+  audioChunks = [];
+
+  if (voiceStream) {
+    try {
+      voiceStream.getTracks().forEach(t => t.stop());
+    } catch (e) {
+    }
+  }
+  voiceStream = null;
+
+  if (recognition) {
+    try {
+      recognition.onend = null;
+      recognition.stop();
+    } catch (e) {
+    }
+  }
+
+  if (reason === "user") {
+    addTranscript("Call ended", "system");
+  }
+}
+
+async function processAudioWithWhisper(audioBlob) {
+  if (isProcessing) return;
+
+  // If the assistant is currently speaking, ignore any captured audio to avoid feedback loops.
+  if (isAssistantSpeaking) return;
+
+  if (!audioBlob || audioBlob.size < 2500) {
+    // Too small to transcribe reliably
+    return;
+  }
+
+  isProcessing = true;
+  updateStatus("Processing speech...", "processing");
+
+  try {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+
+    const response = await fetch('/api/whisper/transcribe/', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error('Transcription failed');
+    }
+
+    const data = await response.json();
+
+    setTyping(false);
+
+    if (data.transcript) {
+      const raw = String(data.transcript || "");
+      const cleaned = normalizeSpokenIdentifiers(raw);
+      const ids = _extractCanonicalIds(cleaned);
+      const changed = cleaned.trim() !== raw.trim();
+
+      if (whisperActive && pendingVoiceIdConfirm && _isYesLike(cleaned)) {
+        const next = pendingVoiceIdConfirm;
+        pendingVoiceIdConfirm = null;
+        addTranscript("Confirmed.", "system");
+        await processVoiceInput(next.query);
+        return;
+      }
+
+      if (whisperActive && (changed || (_looksLikeTrackingMention(raw) && ids.length === 0))) {
+        if (ids.length > 0) {
+          pendingVoiceIdConfirm = { query: cleaned, ids };
+          addTranscript(`I heard ${ids.join(", ")}. Is that correct? Say "yes" or repeat the ID.`, "system");
+          return;
+        }
+        addTranscript("I wasn’t able to hear the ID clearly. Please say it again (example: FWD-1013).", "system");
+        return;
+      }
+
+      addTranscript(cleaned, 'user');
+      await processVoiceInput(cleaned);
+    } else {
+      updateStatus("I couldn't hear that — please try again.", "listening");
+    }
+
+  } catch (err) {
+    console.error('Whisper processing error:', err);
+    updateStatus("Speech processing failed", "error");
+  } finally {
+    isProcessing = false;
+    updateStatus("Listening...", "normal");
+  }
+}
+
+async function processVoiceInput(transcript) {
+  try {
+    transcript = normalizeSpokenIdentifiers(transcript);
+
+    if (whisperActive && pendingVoiceIdConfirm && _isYesLike(transcript)) {
+      const next = pendingVoiceIdConfirm;
+      pendingVoiceIdConfirm = null;
+      addTranscript("Confirmed.", "system");
+      transcript = next.query;
+    }
+
+    if (whisperActive) {
+      const ids = _extractCanonicalIds(transcript);
+      if (_looksLikeTrackingMention(transcript) && ids.length === 0) {
+        addTranscript("I wasn’t able to hear the ID clearly. Please say it again (example: FWD-1013).", "system");
+        return;
+      }
+    }
+
+    updateStatus("Thinking...", "processing");
+    setTyping(true);
+
+    const response = await fetch("/api/query/", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        query: transcript,
+        user_email: "voice@omni.com",
+        mode: "voice"
+      })
+    });
+
+    const data = await response.json();
+
+    const trace = data?.response?.decision_trace || [];
+    renderTimeline(trace);
+
+    if (data.response && data.response.answer) {
+      addTranscript(data.response.answer, 'assistant');
+      speakResponse(data.response.answer);
+      updateStatus("Listening...", "listening");
+    } else {
+      addTranscript("No response from server.", 'system');
+      updateStatus("Listening...", "listening");
+    }
+
+  } catch (err) {
+    console.error('Voice processing error:', err);
+    setTyping(false);
+    addTranscript("Request failed.", 'system');
+    updateStatus("Error", "error");
+  }
+}
+
+function speakResponse(text) {
+  speakText(text);
+}
+
+let preferredVoice = null;
+function selectBestVoice() {
+  const voices = window.speechSynthesis.getVoices() || [];
+  const english = voices.filter(v => (v.lang || "").toLowerCase().startsWith("en"));
+  const candidates = english.length ? english : voices;
+
+  const score = (v) => {
+    const name = (v.name || "").toLowerCase();
+    let s = 0;
+    if (name.includes("neural")) s += 5;
+    if (name.includes("natural")) s += 4;
+    if (name.includes("google")) s += 3;
+    if (name.includes("microsoft")) s += 2;
+    if (name.includes("female") || name.includes("samantha") || name.includes("zira") || name.includes("aria") || name.includes("jenny")) s += 1;
+    return s;
+  };
+
+  preferredVoice = candidates.sort((a, b) => score(b) - score(a))[0] || null;
+}
+
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    selectBestVoice();
+  };
+  selectBestVoice();
+}
+
+function splitIntoChunks(text) {
+  const t = (text || "").trim();
+  if (!t) return [];
+  const parts = t.split(/(?<=[.!?])\s+/);
+  return parts.filter(Boolean);
+}
+
+function sanitizeForSpeech(text) {
+  const t = (text || "");
+  // Strip common markdown that sounds terrible when spoken
+  return t
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/#+\s*/g, "")
+    .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function speakText(text) {
+  const tRaw = (text || "").trim();
+  const t = sanitizeForSpeech(tRaw);
+  if (!t) return;
+
+  // Prevent the assistant's own voice from being re-captured and transcribed.
+  isAssistantSpeaking = true;
+  try {
+    try {
+      if (whisperActive && mediaRecorder) {
+        if (mediaRecorder.state === 'recording' && typeof mediaRecorder.pause === 'function') {
+          mediaRecorder.pause();
+        } else if (mediaRecorder.state === 'recording') {
+          discardNextRecording = true;
+          try { mediaRecorder.stop(); } catch (e) {}
+        }
+      }
+      if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+      }
+    } catch (e) {
+    }
+
+    // Try neural TTS first (closest to Vapi-like quality)
+    try {
+      const res = await fetch("/api/tts/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: t })
+      });
+
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        await new Promise((resolve) => {
+          audio.onended = resolve;
+          audio.onerror = resolve;
+          audio.play().catch(() => resolve());
+        });
+        safeRevokeObjectURL(url);
+        return;
+      }
+    } catch (e) {
+      // fall back to browser speech
+    }
+
+    // Fallback: browser speechSynthesis (best-effort)
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+
+    const chunks = splitIntoChunks(t);
+    for (const chunk of chunks) {
+      await new Promise((resolve) => {
+        const u = new SpeechSynthesisUtterance(chunk);
+        if (preferredVoice) u.voice = preferredVoice;
+        u.rate = 0.95;
+        u.pitch = 1.02;
+        u.volume = 1.0;
+        u.onend = resolve;
+        u.onerror = resolve;
+        window.speechSynthesis.speak(u);
+      });
+    }
+  } finally {
+    await _resumeListeningAfterSpeech();
+  }
+}
+
+// Always resume listening after speech finishes (neural TTS or browser TTS)
+// by using a microtask after speakText returns.
+// Note: this runs after the awaited speech completes.
+async function _resumeListeningAfterSpeech() {
+  try {
+    if (whisperActive && mediaRecorder) {
+      if (mediaRecorder.state === 'paused' && typeof mediaRecorder.resume === 'function') {
+        mediaRecorder.resume();
+      } else if (mediaRecorder.state === 'inactive') {
+        // MediaRecorder was stopped as a fallback; user can restart voice.
+      }
+    }
+  } finally {
+    isAssistantSpeaking = false;
+  }
+}
+
+function addTranscript(text, speaker) {
+  const liveTranscript = document.getElementById("liveTranscript");
+  const timestamp = new Date().toLocaleTimeString();
+
+  const entry = document.createElement('div');
+  entry.style.marginBottom = '5px';
+
+  if (speaker === 'user') {
+    entry.innerHTML = `<strong>[${timestamp}] You:</strong> ${text}`;
+    entry.style.color = '#007bff';
+  } else if (speaker === 'assistant') {
+    entry.innerHTML = `<strong>[${timestamp}] Assistant:</strong> ${text}`;
+    entry.style.color = '#28a745';
+  } else {
+    entry.innerHTML = `<strong>[${timestamp}] System:</strong> ${text}`;
+    entry.style.color = '#6c757d';
+  }
+
+  liveTranscript.appendChild(entry);
+  liveTranscript.scrollTop = liveTranscript.scrollHeight;
+
+  // Mirror transcript into the chat UI
+  if (speaker === 'user') {
+    appendMessage('user', text);
+  } else if (speaker === 'assistant') {
+    appendMessage('assistant', text);
+  }
+}
+
+let _lastStatusMessage = "";
+
+function updateStatus(message, type) {
+  const indicator = document.getElementById("voiceIndicator");
+
+  if (!whisperActive) return;
+
+  indicator.classList.remove("listening", "processing", "speaking");
+
+  // Backwards compatibility
+  if (type === 'normal') type = 'listening';
+
+  if (type === 'listening') {
+    indicator.classList.add("listening");
+  } else if (type === 'processing') {
+    indicator.classList.add("processing");
+  } else if (type === 'speaking') {
+    indicator.classList.add("speaking");
+  } else if (type === 'error') {
+    // no indicator state; chat will show the error text
+  }
+
+  if (message && message !== _lastStatusMessage) {
+    _lastStatusMessage = message;
+  }
+}
+
+navigator.mediaDevices.getUserMedia = navigator.mediaDevices.getUserMedia ||
+  navigator.mediaDevices.webkitGetUserMedia ||
+  navigator.mediaDevices.mozGetUserMedia;
+
+if (recognition) {
+  recognition.onstart = () => {
+    console.log('Speech recognition started');
+  };
+}
+
+</script>
+
+</body>
+</html>

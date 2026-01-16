@@ -1,0 +1,54 @@
+[project]
+name = "omniflow"
+version = "0.1.0"
+description = "OmniFlow - A hierarchical multi-agent orchestration system for omni-retail"
+requires-python = ">=3.10"
+
+dependencies = [
+    # Core backend
+    "django",
+    "djangorestframework",
+    "django-environ",
+
+    # WebSockets
+    "channels",
+    "channels-redis",
+    "redis",
+    "daphne",
+
+    # Agent orchestration
+    "langchain>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-community>=0.2.0",
+    "langchain-openai>=0.1.0",
+    "langgraph>=0.2.0",
+    "pydantic>=2.5",
+    "mcp",
+    "Pillow",
+
+    # LLM
+    "openai>=1.3",
+
+    # Voice/Vapi (using requests)
+    "requests>=2.31.0",
+
+    # Utilities
+    "python-dotenv>=1.0",
+    "uvicorn>=0.23"
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "omniflow*",
+    "agents*",
+    "agents/langchain_based_agents*",
+    "shopcore*",
+    "shipstream*",
+    "payguard*",
+    "caredesk*",
+]
