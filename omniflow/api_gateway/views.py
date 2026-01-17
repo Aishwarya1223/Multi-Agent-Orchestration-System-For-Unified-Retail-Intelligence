@@ -193,7 +193,7 @@ class QueryAPIView(APIView):
             return Response({
                 "response": {
                     "answer": _llm_reply(
-                        "You are OmniFlow, a friendly retail assistant.",
+                        "You are OmniFlow, a friendly retail assistant and first introduce yourself what you can do.",
                         "Greet the user and ask how you can help."
                     ),
                     "confidence": 1.0,

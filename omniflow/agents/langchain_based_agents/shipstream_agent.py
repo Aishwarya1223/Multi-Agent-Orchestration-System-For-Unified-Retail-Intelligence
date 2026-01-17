@@ -3,14 +3,17 @@ from langchain_core.tools import tool
 from langchain.agents import create_agent
 from asgiref.sync import sync_to_async
 from datetime import date
+import base64
+import uuid
 from django.db import transaction
+from django.db.utils import OperationalError
 
 from omniflow.agents.langchain_based_agents.base import (
     get_llm,
     get_system_prompt,
     mcp_manager,
 )
-from omniflow.shipstream.models import Shipment
+from omniflow.shipstream.models import Shipment, ReturnRequest
 
 def normalize_tracking_id(value: str) -> str:
     return (value or "").strip().upper()
@@ -279,6 +282,82 @@ async def initiate_return(tracking_number: str) -> dict:
 
     return await sync_to_async(_db_tx)()
 
+
+@tool(
+    description=(
+        "Attach a return proof image for a shipment return. "
+        "Stores the base64-encoded image in the ReturnRequest table and returns a return_id."
+    )
+)
+async def submit_return_image(tracking_number: str, user_email: str | None = None, image: str | None = None) -> dict:
+    """Store a return proof image.
+
+    Args:
+        tracking_number: Forward shipment tracking number (e.g., FWD-1001).
+        user_email: Optional user email associated with the return.
+        image: Base64 image string or data URL (data:<mime>;base64,<data>).
+
+    Returns:
+        Dict containing success flag and return_id.
+    """
+    tn = normalize_tracking_id(tracking_number)
+    if not tn:
+        return {"success": False, "message": "Missing tracking_number."}
+    if not image:
+        return {"success": False, "message": "Missing image."}
+
+    data = image
+    mime = ""
+    if isinstance(data, str) and data.startswith("data:") and ";base64," in data:
+        header, b64 = data.split(",", 1)
+        mime = header[5:].split(";", 1)[0] or ""
+        data = b64
+
+    try:
+        blob = base64.b64decode(data)
+    except Exception:
+        return {"success": False, "message": "Invalid image encoding."}
+
+    def _db_tx():
+        try:
+            with transaction.atomic(using="shipstream"):
+                rr = (
+                    ReturnRequest.objects
+                    .using("shipstream")
+                    .select_for_update()
+                    .filter(tracking_number__iexact=tn, user_email=(user_email or None))
+                    .first()
+                )
+
+                if not rr:
+                    rr = ReturnRequest.objects.using("shipstream").create(
+                        return_id=f"RET-{uuid.uuid4().hex[:10].upper()}",
+                        tracking_number=tn,
+                        user_email=(user_email or None),
+                        status="Processed",
+                    )
+
+                rr.image_blob = blob
+                rr.image_mime_type = mime or rr.image_mime_type or "image/jpeg"
+                rr.status = "Processed"
+                rr.save(update_fields=["image_blob", "image_mime_type", "status", "updated_at"])
+
+                return {
+                    "success": True,
+                    "return_id": rr.return_id,
+                    "message": f"Return processed successfully. Return ID: {rr.return_id}."
+                }
+        except OperationalError:
+            return {
+                "success": False,
+                "message": (
+                    "Return proof storage is not available because the ReturnRequest table "
+                    "has not been migrated in the shipstream database."
+                ),
+            }
+
+    return await sync_to_async(_db_tx)()
+
 # ---------------- AGENT ----------------
 
 def build_shipstream_agent():
@@ -290,6 +369,7 @@ def build_shipstream_agent():
             check_return_status,
             check_return_eligibility,
             initiate_return,
+            submit_return_image,
         ],
         system_prompt=get_system_prompt("ShipStream Agent"),
     )

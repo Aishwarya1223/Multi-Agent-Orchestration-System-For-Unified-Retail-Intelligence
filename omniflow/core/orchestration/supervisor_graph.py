@@ -26,6 +26,7 @@ from omniflow.agents.langchain_based_agents.shipstream_agent import (
     check_return_eligibility,
     check_return_status,
     initiate_return,
+    submit_return_image,
 )
 from omniflow.agents.langchain_based_agents.payguard_agent import build_payguard_agent
 from omniflow.agents.langchain_based_agents.caredesk_agent import build_caredesk_agent
@@ -80,6 +81,8 @@ class SupervisorState(TypedDict):
     query: str
     user_email: str
     user_name: Optional[str]
+    image: Optional[str]
+    reference_id: Optional[str]
 
     intent: Optional[str]
     pending_action: Optional[Dict[str, Any]]
@@ -100,6 +103,11 @@ class SupervisorState(TypedDict):
 def intent_gate(state: SupervisorState) -> SupervisorState:
     raw_q = state.get("query") or ""
     q = raw_q.lower()
+
+    if state.get("pending_action") and state["pending_action"].get("action") == "await_return_image":
+        if state.get("image"):
+            state["intent"] = "return_image"
+            return state
 
     if state.get("pending_action") and state["pending_action"].get("action") == "confirm_return":
         if _is_yes(raw_q):
@@ -226,6 +234,69 @@ async def handle_return_status(state: SupervisorState) -> SupervisorState:
     # --------------------------------------------------
     state["final_response"] = result.get("message")
     state["confidence_score"] = 1.0
+    return state
+
+
+async def handle_return_image(state: SupervisorState) -> SupervisorState:
+    pending = state.get("pending_action") or {}
+    tracking = (pending.get("tracking_number") or "").strip().upper() or None
+    image = state.get("image")
+
+    if not tracking:
+        state["pending_action"] = None
+        state["final_response"] = _synthesize_answer(
+            user_message=state.get("query") or "",
+            facts={"return": {"error": "missing_tracking_for_image"}},
+        )
+        state["confidence_score"] = 0.5
+        return state
+
+    if not image:
+        state["final_response"] = _synthesize_answer(
+            user_message=state.get("query") or "",
+            facts={
+                "return": {
+                    "tracking_number": tracking,
+                    "stage": "awaiting_image",
+                    "requirement": "item_condition_image",
+                }
+            },
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    result = await submit_return_image.ainvoke({
+        "tracking_number": tracking,
+        "user_email": state.get("user_email"),
+        "image": image,
+    })
+
+    return_id = None
+    if isinstance(result, dict):
+        return_id = (result.get("return_id") or "").strip() or None
+
+    state["pending_action"] = None
+    state["facts"] = {
+        "return": {
+            "tracking_number": tracking,
+            "return_id": return_id,
+            "stage": "processed",
+        }
+    }
+
+    if return_id:
+        state["final_response"] = (
+            f"Your return has been processed successfully. Return ID: {return_id}. "
+            "Do you need help with anything else?"
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    state["final_response"] = _synthesize_answer(
+        user_message=state.get("query") or "",
+        facts=state["facts"],
+    )
+    state["confidence_score"] = 0.7
     return state
 
 
@@ -659,6 +730,7 @@ def build_supervisor_graph():
     # -----------------------------
     graph.add_node("return_request", handle_return_request)
     graph.add_node("return_confirm", handle_return_confirm)
+    graph.add_node("return_image", handle_return_image)
     graph.add_node("return_cancel", handle_return_cancel)
     graph.add_node("return_status", handle_return_status)
 
@@ -687,6 +759,7 @@ def build_supervisor_graph():
             # Return lifecycle
             "return_request": "return_request",
             "return_confirm": "return_confirm",
+            "return_image": "return_image",
             "return_cancel": "return_cancel",
             "return_status": "return_status",
 
@@ -706,6 +779,7 @@ def build_supervisor_graph():
     # -----------------------------
     graph.add_edge("return_request", "aggregate")
     graph.add_edge("return_confirm", "aggregate")
+    graph.add_edge("return_image", "aggregate")
     graph.add_edge("return_cancel", "aggregate")
     graph.add_edge("return_status", "aggregate")
 
@@ -767,11 +841,15 @@ async def run_supervisor(
     user_email: str,
     user_name: Optional[str] = None,
     pending_action: Optional[Dict[str, Any]] = None,
+    image: Optional[str] = None,
+    reference_id: Optional[str] = None,
 ) -> dict:
     initial_state: SupervisorState = {
         "query": query,
         "user_email": user_email,
         "user_name": user_name,
+        "image": image,
+        "reference_id": reference_id,
         "intent": None,
         "pending_action": pending_action,
 
@@ -788,10 +866,18 @@ async def run_supervisor(
 
     result = await SUPERVISOR_GRAPH.ainvoke(initial_state)
 
+    pending = result.get("pending_action")
+    needs_image = bool(isinstance(pending, dict) and pending.get("action") == "await_return_image")
+    ref = None
+    if needs_image and isinstance(pending, dict):
+        ref = pending.get("tracking_number")
+
     return {
         "answer": result["final_response"],
         "confidence": result["confidence_score"],
         "decision_trace": result["decision_trace"],
         "facts": result.get("facts") or {},
-        "pending_action": result.get("pending_action"),
+        "pending_action": pending,
+        "needs_image": needs_image,
+        "reference_id": ref,
     }
