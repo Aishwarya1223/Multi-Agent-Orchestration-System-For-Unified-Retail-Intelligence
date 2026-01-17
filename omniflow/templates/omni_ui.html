@@ -616,6 +616,73 @@ function safeRevokeObjectURL(url) {
 }
 
 let pendingConfirmToken = null;
+let pendingSupervisorAction = null;
+let pendingReturnConfirmFor = null;
+
+function showReturnConfirmUI(trackingNumber) {
+  const tn = String(trackingNumber || '').trim().toUpperCase();
+  if (!tn) return;
+  if (pendingReturnConfirmFor === tn) return;
+  pendingReturnConfirmFor = tn;
+
+  const safeId = tn.replace(/[^A-Za-z0-9_-]/g, "");
+  const yesId = `returnYes_${safeId}`;
+  const noId = `returnNo_${safeId}`;
+
+  const html = `
+    <div class="confirm-card">
+      <div class="hint">Create return request for <strong>${tn}</strong>?</div>
+      <div class="confirm-actions">
+        <button id="${yesId}" class="btn-primary">YES</button>
+        <button id="${noId}" class="btn-danger">NO</button>
+      </div>
+    </div>
+  `;
+
+  const node = appendMessage('system', html, { html: true, className: 'confirm-bubble' });
+  if (!node) return;
+
+  setTimeout(() => {
+    const y = document.getElementById(yesId);
+    const n = document.getElementById(noId);
+
+    if (y) {
+      y.onclick = async () => {
+        appendMessage('user', 'YES');
+
+        await sendTextDirect(JSON.stringify({
+          __action__: "confirm_return",
+          tracking_number: tn
+        }));
+      };
+    }
+
+    if (n) {
+      n.onclick = async () => {
+        appendMessage('user', 'NO');
+        await sendTextDirect(JSON.stringify({
+          __action__: "cancel_return",
+          tracking_number: tn
+        }));
+      };
+    }
+  }, 0);
+}
+
+function handleSupervisorPendingAction(pendingAction) {
+  pendingSupervisorAction = pendingAction || null;
+
+  if (!pendingSupervisorAction) {
+    pendingReturnConfirmFor = null;
+    return;
+  }
+
+  const action = pendingSupervisorAction.action;
+
+  if (action === "initiate_return" || action === "confirm_return") {
+    showReturnConfirmUI(pendingSupervisorAction.tracking_number);
+  }
+}
 
 function showConfirmUI(token) {
   pendingConfirmToken = token;
@@ -665,11 +732,17 @@ async function sendTextDirect(rawText) {
   resetTimelineSeen();
   setTyping(true);
   try {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (e) {}
+
     const res = await fetch("/api/query/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        query: rawText,
+        query: parsed?.__action__ || rawText,
+        tracking_number: parsed?.tracking_number || null,
         user_email: "test@omni.com",
         image: capturedImageData
       })
@@ -702,6 +775,8 @@ async function sendTextDirect(rawText) {
     } else {
       appendMessage("system", "No response from server.");
     }
+
+    handleSupervisorPendingAction(data?.response?.pending_action);
 
     if (answer) {
       await speakText(answer);
@@ -1385,6 +1460,8 @@ async function sendTextWithImage() {
             appendMessage("system", "No response from server.");
           }
 
+          handleSupervisorPendingAction(wsResult?.pending_action);
+
           if (wsResult?.write_preview?.confirm_token) {
             const tok = wsResult.write_preview.confirm_token;
             showConfirmUI(tok);
@@ -1468,6 +1545,8 @@ async function sendTextWithImage() {
     } else {
       appendMessage("system", "No response from server.");
     }
+
+    handleSupervisorPendingAction(data?.response?.pending_action);
 
     if (data?.response?.write_preview?.confirm_token) {
       const tok = data.response.write_preview.confirm_token;
@@ -1889,6 +1968,8 @@ async function processVoiceInput(transcript) {
     const trace = data?.response?.decision_trace || [];
     renderTimeline(trace);
 
+    handleSupervisorPendingAction(data?.response?.pending_action);
+
     if (data.response && data.response.answer) {
       addTranscript(data.response.answer, 'assistant');
       speakResponse(data.response.answer);
@@ -1897,6 +1978,8 @@ async function processVoiceInput(transcript) {
       addTranscript("No response from server.", 'system');
       updateStatus("Listening...", "listening");
     }
+
+    handleSupervisorPendingAction(data?.response?.pending_action);
 
   } catch (err) {
     console.error('Voice processing error:', err);

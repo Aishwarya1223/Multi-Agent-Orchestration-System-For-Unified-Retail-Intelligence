@@ -2,7 +2,9 @@
 
 from langchain_core.tools import tool
 from langchain.agents import create_agent
+from asgiref.sync import sync_to_async
 from omniflow.agents.langchain_based_agents.base import get_llm, get_system_prompt, mcp_manager
+
 from omniflow.shopcore.services import (
     get_user_by_email,
     get_product_by_name,
@@ -16,41 +18,28 @@ from omniflow.agents.input_data import (
 import asyncio
 
 @tool
-def shopcore_lookup(user_email: str, product_name: str) -> dict:
+async def resolve_user_identity(user_email: str) -> dict:
     """
-    Fetch user, product, and latest order for a user and product.
-    Uses input data for processing.
+    Resolve and verify user identity.
     """
-    # Use input data directly
-    user = input_users_db.get(user_email)
-    if not user:
-        return {}
+    try:
+        result = await mcp_manager.call_tool(
+            "user_service",
+            "get_user",
+            {"email": user_email}
+        )
+        return result.content if hasattr(result, "content") else result
+    except:
+        user = await sync_to_async(lambda: get_user_by_email(user_email))()
+        if not user:
+            return {}
+        return {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "premium_status": user.premium_status,
+        }
 
-    product = input_products_db.get(product_name)
-    if not product:
-        return {}
-
-    # Find order for this user and product
-    order = None
-    for order_data in input_orders_db.values():
-        if (order_data["user_email"] == user_email and 
-            order_data["product_name"] == product_name):
-            order = order_data
-            break
-    
-    if not order:
-        return {}
-
-    return {
-        "user_id": user["id"],
-        "product_id": product["id"],
-        "order_id": order["id"],
-        "order_status": order["status"],
-        "order_date": order["order_date"],
-        "product_name": product["name"],
-        "shipment_id": order.get("shipment_id"),
-        "amount": order.get("amount")
-    }
 
 @tool
 async def mcp_user_lookup(user_email: str) -> dict:
@@ -64,7 +53,7 @@ async def mcp_user_lookup(user_email: str) -> dict:
         return result.content if hasattr(result, 'content') else result
     except:
         # Fallback to local database
-        user = get_user_by_email(user_email)
+        user = await sync_to_async(lambda: get_user_by_email(user_email))()
         if user:
             return {
                 "id": user.id,
@@ -86,7 +75,7 @@ async def mcp_product_lookup(product_name: str) -> dict:
         return result.content if hasattr(result, 'content') else result
     except:
         # Fallback to local database
-        product = get_product_by_name(product_name)
+        product = await sync_to_async(lambda: get_product_by_name(product_name))()
         if product:
             return {
                 "id": product.id,
@@ -110,7 +99,7 @@ async def mcp_order_lookup(user_id: int, product_id: int) -> dict:
         return result.content if hasattr(result, 'content') else result
     except:
         # Fallback to local database
-        order = get_order_for_user_and_product(user_id, product_id)
+        order = await sync_to_async(lambda: get_order_for_user_and_product(user_id, product_id))()
         if order:
             return {
                 "id": order.id,
@@ -120,6 +109,45 @@ async def mcp_order_lookup(user_id: int, product_id: int) -> dict:
                 "status": order.status
             }
         return {}
+
+@tool(
+    description=(
+        "Verify that an order belongs to the user identified by email. "
+        "Returns ownership status without exposing order details."
+    )
+)
+async def verify_order_ownership(order_id: int, user_email: str) -> dict:
+    from omniflow.shopcore.models import Order, User
+    from asgiref.sync import sync_to_async
+
+    user_email = (user_email or "").strip().lower()
+    if not user_email:
+        return {"valid": False, "reason": "missing_user_email"}
+
+    user = await sync_to_async(
+        lambda: User.objects.using("shopcore")
+        .filter(email__iexact=user_email)
+        .first()
+    )()
+
+    if not user:
+        return {"valid": False, "reason": "user_not_found"}
+
+    order = await sync_to_async(
+        lambda: Order.objects.using("shopcore")
+        .filter(id=order_id, user_id=user.id)
+        .first()
+    )()
+
+    if not order:
+        return {"valid": False, "reason": "ownership_mismatch"}
+
+    return {
+        "valid": True,
+        "order_id": order.id,
+        "user_id": user.id,
+    }
+
 
 async def initialize_mcp_connections():
     """Initialize MCP connections for shopcore agent"""
@@ -137,8 +165,15 @@ def build_shopcore_agent():
 
     agent = create_agent(
         model=llm,
-        tools=[shopcore_lookup, mcp_user_lookup, mcp_product_lookup, mcp_order_lookup],
+        tools=[
+            resolve_user_identity,
+            mcp_user_lookup,
+            mcp_product_lookup,
+            mcp_order_lookup,
+            verify_order_ownership,
+        ],
         system_prompt=prompt
     )
+
 
     return agent

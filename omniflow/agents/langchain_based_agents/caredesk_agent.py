@@ -9,6 +9,47 @@ from omniflow.caredesk.services import (
 )
 from omniflow.agents.input_data import input_tickets_db
 import asyncio
+from langchain_core.tools import tool
+from asgiref.sync import sync_to_async
+
+from omniflow.caredesk.models import Ticket, TicketMessage
+
+
+@tool(
+    description="Automatically create a support ticket for refund processing."
+)
+async def auto_create_refund_ticket(
+    user_id: int,
+    order_id: int,
+    tracking_number: str,
+    refund_status: str,
+) -> dict:
+    """
+    Creates a CareDesk ticket automatically after refund initiation.
+    """
+
+    ticket = await sync_to_async(Ticket.objects.create)(
+        user_id=user_id,
+        reference_id=order_id,
+        issue_type="Refund Request",
+    )
+
+    await sync_to_async(TicketMessage.objects.create)(
+        ticket=ticket,
+        sender="Agent",
+        content=(
+            f"A refund has been initiated for shipment {tracking_number}. "
+            f"Current refund status: {refund_status}."
+        ),
+    )
+
+    return {
+        "ticket_id": ticket.id,
+        "message": (
+            "A support ticket has been automatically created "
+            "to track your refund."
+        ),
+    }
 
 @tool
 def ticket_lookup(user_id: int) -> dict:
@@ -125,7 +166,13 @@ def build_caredesk_agent():
 
     agent = create_agent(
         model=llm,
-        tools=[ticket_lookup, mcp_ticket_lookup, mcp_create_ticket, mcp_add_message, mcp_escalate_ticket, mcp_knowledge_base_search],
+        tools=[ticket_lookup, 
+               mcp_ticket_lookup, 
+               mcp_create_ticket, 
+               mcp_add_message, 
+               mcp_escalate_ticket, 
+               mcp_knowledge_base_search,
+               auto_create_refund_ticket,],
         system_prompt=prompt
     )
 

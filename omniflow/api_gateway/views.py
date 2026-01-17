@@ -1,285 +1,353 @@
+# api_gateway/views.py
 import asyncio
+import json
+import re
+
+from asgiref.sync import async_to_sync
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from django.db import close_old_connections
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from django.db import close_old_connections
-import re
-import time
-import secrets
-from datetime import date
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from omniflow.core.orchestration.supervisor_graph import run_supervisor
+from omniflow.agents.langchain_based_agents.base import get_llm
 from omniflow.utils.logging import get_logger
+from omniflow.utils.prompts import get_ask_name_prompt, get_response_synthesizer_prompt
 
-from omniflow.shipstream.models import Shipment, ReverseShipment
-from omniflow.shopcore.models import User, Order
-from omniflow.caredesk.models import Ticket, TicketAttachment
-from omniflow.payguard.models import Wallet, Transaction
+from omniflow.shopcore.models import User
+from omniflow.payguard.models import Wallet
 
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------
-# Utilities (ONLY deterministic helpers remain)
+# LLM helper (phrasing ONLY)
 # ---------------------------------------------------------------------
 
-TRACKING_REGEX = re.compile(r"\b(FWD|REV|NDR|EXC)\s*[-#]?\s*(\d+)\b", re.IGNORECASE)
+def _llm_reply(system_instruction: str, user_message: str = "") -> str:
+    llm = get_llm()
+    out = llm.invoke([
+        SystemMessage(content=system_instruction),
+        HumanMessage(content=user_message),
+    ])
+    return (getattr(out, "content", "") or "").strip()
 
-# Keywords that indicate data access requests
-DATA_ACCESS_KEYWORDS = [
-    "track", "tracking", "shipment", "order", "return", "refund", "ndr", "exchange", "wallet", "balance", "payment", "transaction"
-]
 
-def is_data_access_request(query: str) -> bool:
-    q = query.lower()
-    return any(keyword in q for keyword in DATA_ACCESS_KEYWORDS)
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
 
-def get_user_from_session(user_email: str) -> User | None:
-    # Try to fetch user by email; if not found, return None
-    return User.objects.filter(email=user_email).first()
+TRACKING_REGEX = re.compile(r"\b(FWD|REV|NDR|EXC)[- ]*(\d+)\b", re.I)
+
+ACCOUNT_KEYWORDS = {"wallet", "balance", "payment", "transactions", "account"}
+SHIPMENT_KEYWORDS = {"track", "shipment", "delivery", "return", "refund", "ndr", "exchange"}
+
 
 def normalize_query(q: str) -> str:
     if not q:
         return ""
-    q = re.sub(r"[‐‑‒–—−]", "-", q)
-    # Normalize spaced formats like "FWD 1001" -> "FWD-1001"
-    q = re.sub(r"\b(FWD|REV|NDR|EXC)\s+(\d+)\b", r"\1-\2", q, flags=re.IGNORECASE)
-    # Also normalize "FWD1001" -> "FWD-1001"
-    q = re.sub(r"\b(FWD|REV|NDR|EXC)(\d+)\b", r"\1-\2", q, flags=re.IGNORECASE)
-    return q
+    q = re.sub(r"[‐-‒–—−]", "-", q)
+    q = re.sub(r"\b(FWD|REV|NDR|EXC)\s*(\d+)\b", r"\1-\2", q, flags=re.I)
+    return q.strip()
+
 
 def extract_tracking_id(q: str) -> str | None:
-    if not q:
+    m = TRACKING_REGEX.search(q or "")
+    if not m:
         return None
-    m = TRACKING_REGEX.search(q)
+    return f"{m.group(1).upper()}-{m.group(2)}"
+
+
+def is_account_query(q: str) -> bool:
+    q = q.lower()
+    return any(k in q for k in ACCOUNT_KEYWORDS)
+
+
+def is_shipment_query(q: str) -> bool:
+    q = q.lower()
+    return any(k in q for k in SHIPMENT_KEYWORDS)
+
+
+def is_valid_user_name(value: str) -> bool:
+    v = (value or "").strip()
+    if not v:
+        return False
+    if len(v) < 2 or len(v) > 60:
+        return False
+    if v.strip().lower() in {"hi", "hello", "hey"}:
+        return False
+    if TRACKING_REGEX.search(v):
+        return False
+    if any(ch.isdigit() for ch in v):
+        return False
+    if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]*", v):
+        return False
+    return True
+
+
+def extract_name_candidate(text: str) -> str:
+    t = (text or "").strip()
+    m = re.search(r"\bmy\s+name\s+is\s+(.+)$", t, re.I)
     if m:
-        prefix = m.group(1).upper()
-        number = m.group(2)
-        return f"{prefix}-{number}"
-    # Fallback: brute-force scan for any FWD/REV/NDR/EXC followed by digits
-    fallback = re.search(r"\b(FWD|REV|NDR|EXC)[\s#-]*(\d+)\b", q, flags=re.IGNORECASE)
-    if fallback:
-        prefix = fallback.group(1).upper()
-        number = fallback.group(2)
-        logger.info(f"[DEBUG] fallback matched: prefix={prefix} number={number}")
-        return f"{prefix}-{number}"
-    logger.info(f"[DEBUG] no tracking ID found in: {q!r}")
-    return None
+        return m.group(1).strip()
+    m = re.search(r"\bi\s+am\s+(.+)$", t, re.I)
+    if m:
+        return m.group(1).strip()
+    return t
+
+
+def get_user(email: str) -> User | None:
+    return User.objects.filter(email=email).first()
+
 
 # ---------------------------------------------------------------------
-# API VIEW
+# API
 # ---------------------------------------------------------------------
 
 @method_decorator(csrf_exempt, name="dispatch")
 class QueryAPIView(APIView):
+
     def post(self, request):
         close_old_connections()
 
-        query = request.data.get("query", "")
+        raw_query = request.data.get("query", "")
+        action_tracking_number = request.data.get("tracking_number")
+        reference_id = request.data.get("reference_id")
+        image = request.data.get("image")
         user_email = request.data.get("user_email")
 
         if not user_email:
-            return Response(
-                {"error": "user_email is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "user_email is required"}, status=400)
 
-        query = normalize_query(query)
-        tracking_id = extract_tracking_id(query)
+        query = normalize_query(raw_query)
+        extracted_tracking = extract_tracking_id(query)
 
-        # DEBUG LOG
-        logger.info(f"[DEBUG] query={query!r} tracking_id={tracking_id!r}")
+        logger.info(f"[QUERY] {query!r} | extracted_tracking={extracted_tracking}")
 
-        # ===============================================================
-        # FIRST MESSAGE: backend greeting on empty query
-        # ===============================================================
-        if not query:
-            return Response({
-                "response": {
-                    "answer": "Hello! I'm OmniFlow, your intelligent retail assistant. I can help you with order status, shipment tracking, payments, returns, refunds, NDRs, and exchanges. How can I assist you today?",
-                    "confidence": 1.0,
-                    "decision_trace": [{"agent": "System", "reason": "Initial greeting"}],
-                }
-            }, status=status.HTTP_200_OK)
+        # --------------------------------------------------
+        # Session keys
+        # --------------------------------------------------
 
-        # ===============================================================
-        # 🔐 DATA ACCESS FLOW: Ask for name, then ID (once), then respond
-        # ===============================================================
-        user = get_user_from_session(user_email)
         name_key = f"user_name_{user_email}"
-        id_key = f"user_id_ref_{user_email}"
-        user_key = f"user_profile_{user_email}"
-        user_name = request.session.get(name_key)
-        stored_id = request.session.get(id_key)
+        tracking_key = f"user_tracking_{user_email}"
+        pending_key = f"pending_action_{user_email}"
+        name_pending_key = f"user_name_pending_{user_email}"
 
-        # Cache DB user details when available
-        if user and not request.session.get(user_key):
-            request.session[user_key] = {
-                "id": user.id,
-                "name": user.name,
-                "email": user.email,
-            }
-            if user.name and not user_name:
-                request.session[name_key] = user.name
-                user_name = user.name
+        user_name = request.session.get(name_key)
+        stored_tracking = request.session.get(tracking_key)
+        pending_action = request.session.get(pending_key)
+        name_pending = bool(request.session.get(name_pending_key))
+
+        if user_name is not None and not is_valid_user_name(str(user_name)):
+            request.session[name_key] = None
+            request.session[name_pending_key] = False
+            request.session.save()
+            user_name = None
+
+        # If the user explicitly refers to a different tracking ID, do not let an old
+        # pending action leak into this turn.
+        if extracted_tracking and pending_action:
+            if not isinstance(pending_action, dict):
+                pending_action = None
+                request.session[pending_key] = None
+                request.session.save()
+            else:
+                pending_tracking = (pending_action.get("tracking_number") or "").strip().upper() or None
+                if pending_tracking and extracted_tracking != pending_tracking:
+                    pending_action = None
+                    request.session[pending_key] = None
+                    request.session.save()
+
+        # --------------------------------------------------
+        # Action payload support (from UI)
+        # --------------------------------------------------
+        action_tracking = (action_tracking_number or "").strip().upper() or None
+        if action_tracking and not extracted_tracking:
+            request.session[tracking_key] = action_tracking
+            stored_tracking = action_tracking
             request.session.save()
 
-        if is_data_access_request(query):
-            if not user_name:
-                request.session[name_key] = None
+        if query in {"confirm_return", "cancel_return"}:
+            tracking_for_action = extracted_tracking or stored_tracking
+            if tracking_for_action:
+                pending_action = {
+                    "action": "confirm_return",
+                    "tracking_number": tracking_for_action,
+                }
+                # Supervisor expects YES/NO text while pending_action=confirm_return is set.
+                query = "YES" if query == "confirm_return" else "NO"
+
+        # --------------------------------------------------
+        # Greeting
+        # --------------------------------------------------
+
+        if not query and not image and not reference_id:
+            request.session[name_key] = None
+            request.session[name_pending_key] = False
+            request.session.save()
+            return Response({
+                "response": {
+                    "answer": _llm_reply(
+                        "You are OmniFlow, a friendly retail assistant.",
+                        "Greet the user and ask how you can help."
+                    ),
+                    "confidence": 1.0,
+                    "decision_trace": [{"agent": "System", "reason": "Greeting"}],
+                }
+            })
+
+        # --------------------------------------------------
+        # Store tracking ONLY if present now
+        # --------------------------------------------------
+
+        if extracted_tracking:
+            request.session[tracking_key] = extracted_tracking
+            stored_tracking = extracted_tracking
+            request.session.save()
+
+        # --------------------------------------------------
+        # Ask name ONLY for account queries
+        # --------------------------------------------------
+
+        if is_account_query(query) and not user_name:
+            request.session[name_key] = None
+            request.session[name_pending_key] = True
+            request.session.save()
+            return Response({
+                "response": {
+                    "answer": _llm_reply(
+                        get_ask_name_prompt().format(user_query=query)
+                    ),
+                    "confidence": 0.9,
+                    "decision_trace": [{"agent": "System", "reason": "Name required"}],
+                }
+            })
+
+        if is_shipment_query(query) and (extracted_tracking or stored_tracking) and not user_name:
+            request.session[name_key] = None
+            request.session[name_pending_key] = True
+            request.session.save()
+            return Response({
+                "response": {
+                    "answer": _llm_reply(
+                        get_ask_name_prompt().format(user_query=query)
+                    ),
+                    "confidence": 0.9,
+                    "decision_trace": [{"agent": "System", "reason": "Name required"}],
+                }
+            })
+
+        if name_pending and request.session.get(name_key) is None and not extracted_tracking:
+            candidate = extract_name_candidate(query)
+            if not is_valid_user_name(candidate):
+                request.session[name_pending_key] = True
                 request.session.save()
                 return Response({
                     "response": {
-                        "answer": "Before I share any order or shipment details, please tell me your full name.",
+                        "answer": _llm_reply(
+                            get_ask_name_prompt().format(user_query=query)
+                        ),
                         "confidence": 0.9,
                         "decision_trace": [{"agent": "System", "reason": "Name required"}],
                     }
-                }, status=status.HTTP_200_OK)
+                })
 
-            if not stored_id:
-                if tracking_id:
-                    request.session[id_key] = tracking_id
-                    request.session.save()
-                else:
-                    return Response({
-                        "response": {
-                            "answer": "Thanks. Please provide your order ID or tracking number so I can look it up.",
-                            "confidence": 0.9,
-                            "decision_trace": [{"agent": "System", "reason": "ID required"}],
-                        }
-                    }, status=status.HTTP_200_OK)
-
-        # Capture name if we were waiting for it
-        if request.session.get(name_key) is None and query and not is_data_access_request(query):
-            captured_name = query.strip()
-            request.session[name_key] = captured_name
-            # Try to resolve user by name if email lookup didn't work
-            if not user:
-                matched = User.objects.filter(name__iexact=captured_name).first()
-                if matched:
-                    request.session[user_key] = {
-                        "id": matched.id,
-                        "name": matched.name,
-                        "email": matched.email,
-                    }
+            request.session[name_key] = candidate
+            request.session[name_pending_key] = False
             request.session.save()
             return Response({
                 "response": {
-                    "answer": f"Thanks, {request.session[name_key]}. Please provide your order ID or tracking number.",
+                    "answer": _llm_reply(
+                        "You are OmniFlow, a friendly retail assistant.",
+                        f"The user just provided their name: {candidate}. Thank them briefly and ask how you can help.",
+                    ),
                     "confidence": 0.9,
                     "decision_trace": [{"agent": "System", "reason": "Name captured"}],
                 }
-            }, status=status.HTTP_200_OK)
+            })
 
-        # Use stored ID if present and no ID in current query
-        if not tracking_id and stored_id:
-            tracking_id = extract_tracking_id(str(stored_id)) or tracking_id
+        if is_account_query(query) and any(k in query.lower() for k in ["wallet", "balance"]):
+            user = get_user(user_email)
+            wallet = Wallet.objects.filter(user=user).first() if user else None
 
-        # ===============================================================
-        # 🔐 HARD RULE: TRACKING IS ALWAYS DETERMINISTIC
-        # ===============================================================
-        if tracking_id and (request.session.get(name_key) and request.session.get(id_key)):
-            try:
-                # 🔒 Bypass intent + smalltalk + LLM
-                # Supervisor will ONLY resolve, never ask questions
-                result = asyncio.run(run_supervisor(
-                    query=tracking_id,
-                    user_email=user_email
-                ))
+            if wallet:
+                facts = {
+                    "payguard": {
+                        "balance": wallet.balance,
+                        "currency": wallet.currency,
+                    }
+                }
 
-                answer = result.get("answer")
-
-                # Absolute guard: NEVER ask for tracking again
-                if not answer or "provide" in answer.lower():
-                    return Response({
-                        "response": {
-                            "answer": f"{tracking_id} could not be found. Please verify the ID and try again.",
-                            "confidence": 0.7,
-                            "decision_trace": [{
-                                "agent": "ShipStream",
-                                "reason": "Deterministic tracking lookup"
-                            }]
-                        }
-                    }, status=status.HTTP_200_OK)
-
-                return Response(
-                    {"response": result},
-                    status=status.HTTP_200_OK
+                prompt = get_response_synthesizer_prompt()
+                msg = (
+                    "USER_MESSAGE:\n"
+                    f"{query}\n\n"
+                    "FACTS_JSON:\n"
+                    f"{json.dumps(facts, ensure_ascii=False)}"
                 )
 
-            except Exception as e:
-                logger.error(f"Tracking failed: {e}", exc_info=True)
+                answer = _llm_reply(prompt, msg)
+
                 return Response({
                     "response": {
-                        "answer": "Unable to retrieve tracking information at the moment.",
-                        "confidence": 0.6,
-                        "decision_trace": [{
-                            "agent": "ShipStream",
-                            "reason": "Exception"
-                        }]
+                        "answer": answer,
+                        "confidence": 0.95,
+                        "decision_trace": [
+                            {"agent": "PayGuard", "reason": "Wallet data retrieved"},
+                            {"agent": "LLM", "reason": "Response synthesized"},
+                        ],
+                        "facts": facts,
                     }
-                }, status=status.HTTP_200_OK)
+                })
 
-        # ===============================================================
-        # PAYGUARD (deterministic, identity required)
-        # ===============================================================
-        if ("wallet" in query.lower() or "balance" in query.lower()) and identified:
-            user = get_user_from_session(user_email)
-            if not user:
-                return Response({
-                    "response": {
-                        "answer": "Please identify yourself before accessing wallet details.",
-                        "confidence": 0.8,
-                        "decision_trace": [{"agent": "ShopCore", "reason": "Identity missing"}],
-                    }
-                }, status=status.HTTP_200_OK)
+        supervisor_query = query
 
-            wallet = Wallet.objects.filter(user_id=user.id).first()
-            if not wallet:
-                return Response({
-                    "response": {
-                        "answer": "No wallet found for your account.",
-                        "confidence": 0.8,
-                        "decision_trace": [{"agent": "PayGuard", "reason": "Wallet missing"}],
-                    }
-                }, status=status.HTTP_200_OK)
+        if is_shipment_query(query) and stored_tracking and not extracted_tracking:
+            lower_q = (query or "").lower()
+            wants_return = any(k in lower_q for k in ["return", "refund", "send back"])
+            if wants_return:
+                supervisor_query = f"return {stored_tracking}"
+            else:
+                supervisor_query = f"track {stored_tracking}"
 
-            return Response({
-                "response": {
-                    "answer": f"Your wallet balance is {wallet.balance} {wallet.currency}.",
-                    "confidence": 0.9,
-                    "decision_trace": [{"agent": "PayGuard", "reason": "Wallet lookup"}],
-                }
-            }, status=status.HTTP_200_OK)
+        # --------------------------------------------------
+        # Supervisor call
+        # --------------------------------------------------
 
-        # ===============================================================
-        # FALLBACK → SUPERVISOR (non-tracking only)
-        # ===============================================================
         try:
-            result = asyncio.run(run_supervisor(
-                query=query,
-                user_email=user_email
-            ))
-            return Response(
-                {"response": result},
-                status=status.HTTP_200_OK
+            result = async_to_sync(run_supervisor)(
+                query=supervisor_query,
+                user_email=user_email,
+                user_name=user_name,
+                pending_action=pending_action,
+                image=image,
+                reference_id=reference_id,
             )
-        except Exception as e:
-            logger.error(f"Unhandled error: {e}", exc_info=True)
+
+            request.session[pending_key] = result.get("pending_action")
+            request.session.save()
+
+            # Trust supervisor output
+            return Response({"response": result})
+
+        except Exception:
+            logger.error("Supervisor failed", exc_info=True)
             return Response({
                 "response": {
-                    "answer": "Sorry — something went wrong.",
+                    "answer": _llm_reply(
+                        "You are OmniFlow, a helpful retail assistant.",
+                        "Apologize briefly and ask the user to try again.",
+                    ),
                     "confidence": 0.5,
-                    "decision_trace": [{"agent": "System", "reason": "Unhandled exception"}],
+                    "decision_trace": [{"agent": "System", "reason": "Exception"}],
                 }
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            })
 
-# ---------------------------------------------------------------------
-# UI
-# ---------------------------------------------------------------------
 
 def omni_ui(request):
     logger.info("Rendering OmniFlow UI")

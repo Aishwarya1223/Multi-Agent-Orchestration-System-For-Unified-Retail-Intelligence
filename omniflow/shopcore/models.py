@@ -1,16 +1,13 @@
 from django.db import models
 
-# Create your models here.
-from django.db import models
-
 
 class User(models.Model):
     name = models.CharField(max_length=100)
-    email = models.EmailField(null=True, blank=True)
+    email = models.EmailField(null=True, blank=True, unique=True)
     premium_status = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"{self.name}"
+        return self.name
 
 
 class Product(models.Model):
@@ -23,10 +20,22 @@ class Product(models.Model):
 
 
 class Order(models.Model):
-    user_id = models.IntegerField()          # reference to User.id
-    product_id = models.IntegerField()       # reference to Product.id
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="orders",
+        default=''
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="orders",
+        null=True,
+        blank=True,
+    )
     order_date = models.DateField()
     status = models.CharField(max_length=30)
 
     def __str__(self):
-        return f"Order {self.id} (User {self.user_id})"
+        return f"Order {self.id} (User {self.user.name})"
+

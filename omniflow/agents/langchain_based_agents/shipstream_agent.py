@@ -1,196 +1,296 @@
-# langchain_based_agents/shipstream_agent.py
-
+#langchain_based_agents/shipstream_agent.py
 from langchain_core.tools import tool
 from langchain.agents import create_agent
-from omniflow.agents.langchain_based_agents.base import get_llm, get_system_prompt, mcp_manager
-from omniflow.shipstream.services import (
-    get_shipment_by_order_id,
-    get_latest_tracking_event,
-)
-from omniflow.shipstream.models import Shipment, ReverseShipment, NdrEvent, ExchangeShipment
-from omniflow.agents.input_data import (
-    input_forward_shipments_db,
-    input_reverse_shipments_db,
-    input_ndr_shipments_db,
-    input_exchange_shipments_db
-)
-import asyncio
+from asgiref.sync import sync_to_async
+from datetime import date
+from django.db import transaction
 
-@tool
-def shipment_lookup(order_id: str = "", tracking_number: str = "") -> dict:
-    """
-    Fetch shipment and latest tracking status for an order.
-    Uses input data for processing.
-    """
-    # Prefer explicit tracking_number when available
-    key = (tracking_number or order_id or "").strip()
-    if not key:
+from omniflow.agents.langchain_based_agents.base import (
+    get_llm,
+    get_system_prompt,
+    mcp_manager,
+)
+from omniflow.shipstream.models import Shipment
+
+def normalize_tracking_id(value: str) -> str:
+    return (value or "").strip().upper()
+
+# ---------------- INTERNAL ORM ----------------
+
+async def _shipment_lookup_internal(tracking_number: str) -> dict:
+    shipment = await sync_to_async(
+        lambda: Shipment.objects.using("shipstream")
+        .filter(tracking_number=tracking_number)
+        .first()
+    )()
+    if not shipment:
         return {}
 
-    # 1) ORM-backed lookup (SQLite)
+    return {
+        "tracking_number": shipment.tracking_number,
+        "current_status": shipment.status,
+        "estimated_arrival": str(shipment.estimated_arrival) if shipment.estimated_arrival else None,
+        "last_updated": str(shipment.shipment_date) if shipment.shipment_date else None,
+        "customer": shipment.customer_name,
+        "amount": str(shipment.amount),
+    }
+
+# ---------------- TOOLS ----------------
+
+@tool(
+    description="Lookup shipment details by tracking number using Django ORM. "
+                "Returns shipment status, ETA, and customer details."
+)
+async def shipment_lookup(query: str) -> dict:
+    tracking_number = normalize_tracking_id(query)
+    if not tracking_number:
+        return {}
+    return await _shipment_lookup_internal(tracking_number)
+
+@tool(
+    description="Lookup shipment tracking information via MCP service. "
+                "Falls back to local database lookup if MCP is unavailable."
+)
+async def mcp_tracking_lookup(query: str) -> dict:
+    tracking_number = normalize_tracking_id(query)
     try:
-        shipment = Shipment.objects.filter(tracking_number=key).first()
-        if shipment:
-            # Return created?
-            rev = ReverseShipment.objects.filter(original_shipment_id=shipment.tracking_number).first()
-            ndr = NdrEvent.objects.filter(original_shipment_id=shipment.tracking_number).first()
-            exc = ExchangeShipment.objects.filter(original_shipment_id=shipment.tracking_number).first()
+        result = await mcp_manager.call_tool(
+            "tracking_service",
+            "get_tracking",
+            {"tracking_number": tracking_number},
+        )
+        return result.content if hasattr(result, "content") else result
+    except Exception:
+        return await _shipment_lookup_internal(tracking_number)
 
-            payload = {
-                "tracking_number": shipment.tracking_number,
-                "estimated_arrival": str(shipment.estimated_arrival) if shipment.estimated_arrival else None,
-                "current_status": shipment.status,
-                "last_updated": str(shipment.shipment_date) if shipment.shipment_date else None,
-                "customer": shipment.customer_name,
-                "amount": str(shipment.amount),
-            }
 
-            if rev:
-                payload.update({
-                    "return_created": True,
-                    "reverse_number": rev.reverse_number,
-                    "refund_status": rev.refund_status,
-                    "return_reason": rev.reason,
-                    "return_date": str(rev.return_date),
-                })
-            else:
-                payload["return_created"] = False
+from omniflow.shipstream.models import ReverseShipment
 
-            if ndr:
-                payload.update({
-                    "ndr_number": ndr.ndr_number,
-                    "ndr_issue": ndr.issue,
-                    "ndr_attempts": ndr.attempts,
-                    "ndr_outcome": ndr.final_outcome,
-                    "ndr_date": str(ndr.ndr_date),
-                })
 
-            if exc:
-                payload.update({
-                    "exchange_number": exc.exchange_number,
-                    "exchange_status": exc.status,
-                    "exchange_date": str(exc.exchange_date),
-                    "new_item": exc.new_item,
-                })
+@tool
+async def check_return_status(tracking_number: str) -> dict:
+    """
+    Check whether a return has been created for a shipment.
+    Uses MCP first, falls back to local DB.
+    """
 
+    # --------------------------------------------------
+    # 1️⃣ MCP (authoritative if available)
+    # --------------------------------------------------
+    try:
+        result = await mcp_manager.call_tool(
+            "logistics_service",
+            "get_return_status",
+            {"tracking_number": tracking_number},
+        )
+        return result.content if hasattr(result, "content") else result
+    except Exception:
+        pass  # graceful fallback
+
+    # --------------------------------------------------
+    # 2️⃣ DB fallback (deterministic)
+    # --------------------------------------------------
+    reverse = await sync_to_async(
+        lambda: ReverseShipment.objects
+        .using("shipstream")
+        .filter(original_shipment__tracking_number=tracking_number)
+        .first()
+    )()
+
+    if not reverse:
+        return {
+            "message": (
+                f"No return has been created yet for shipment {tracking_number}. "
+                "The shipment is currently being processed."
+            )
+        }
+
+    return {
+        "message": (
+            f"Yes, a return has already been created for {tracking_number}. "
+            f"The return shipment {reverse.reverse_number} was initiated on "
+            f"{reverse.return_date}, and the refund status is "
+            f"'{reverse.refund_status}'."
+        )
+    }
+
+
+
+from omniflow.shipstream.models import Shipment
+
+
+@tool
+async def check_return_eligibility(tracking_number: str) -> dict:
+    """
+    Check if a shipment is eligible for return.
+    Uses MCP first, falls back to local DB.
+    """
+
+    tn = normalize_tracking_id(tracking_number)
+
+    # --------------------------------------------------
+    # 1️⃣ MCP (authoritative)
+    # --------------------------------------------------
+    try:
+        result = await mcp_manager.call_tool(
+            "logistics_service",
+            "check_return_eligibility",
+            {"tracking_number": tn},
+        )
+        payload = result.content if hasattr(result, "content") else result
+        if isinstance(payload, dict) and isinstance(payload.get("eligible"), bool):
             return payload
     except Exception:
-        # If ORM isn't ready, fall back to mock dictionaries below
         pass
 
-    # 2) Fallback: Use input data
-    shipment_data = input_forward_shipments_db.get(key)
-    if shipment_data:
+    # --------------------------------------------------
+    # 2️⃣ DB fallback
+    # --------------------------------------------------
+    shipment = await sync_to_async(
+        lambda: Shipment.objects
+        .using("shipstream")
+        .filter(tracking_number__iexact=tn)
+        .first()
+    )()
+
+    if not shipment:
         return {
-            "tracking_number": key,
-            "estimated_arrival": "2023-10-05",
-            "current_status": shipment_data["status"],
-            "last_updated": shipment_data["date"],
-            "customer": shipment_data["customer"],
-            "amount": shipment_data["amount"]
+            "eligible": False,
+            "message": f"I couldn't find a shipment with tracking ID {tn}."
         }
-    
-    # Check reverse shipments
-    for rev_id, rev_data in input_reverse_shipments_db.items():
-        if rev_data["original_awb"] == key:
-            return {
-                "tracking_number": rev_id,
-                "estimated_arrival": rev_data["return_date"],
-                "current_status": "Returned",
-                "last_updated": rev_data["return_date"],
-                "reason": rev_data["reason"],
-                "refund_status": rev_data["refund_status"],
-                "return_created": True,
-                "reverse_number": rev_id,
-            }
-    
-    # Check NDR shipments
-    for ndr_id, ndr_data in input_ndr_shipments_db.items():
-        if ndr_data["original_awb"] == key:
-            return {
-                "tracking_number": ndr_id,
-                "estimated_arrival": ndr_data["ndr_date"],
-                "current_status": f"NDR - {ndr_data['final_outcome']}",
-                "last_updated": ndr_data["ndr_date"],
-                "issue": ndr_data["issue"],
-                "attempts": ndr_data["attempts"],
-                "final_outcome": ndr_data["final_outcome"]
-            }
-    
-    # Check exchange shipments
-    for exc_id, exc_data in input_exchange_shipments_db.items():
-        if exc_data["original_awb"] == key:
-            return {
-                "tracking_number": exc_id,
-                "estimated_arrival": exc_data["exchange_date"],
-                "current_status": f"Exchanged - {exc_data['status']}",
-                "last_updated": exc_data["exchange_date"],
-                "new_item": exc_data["new_item"],
-                "exchange_status": exc_data["status"]
-            }
-    
-    return {}
 
-@tool
-async def mcp_shipment_lookup(order_id: str) -> dict:
-    """
-    Lookup shipment information via MCP server if available.
-    Falls back to local database if MCP is not available.
-    """
-    try:
-        # Try to get shipment info from MCP server
-        result = await mcp_manager.call_tool("shipping_service", "get_shipment", {"order_id": order_id})
-        return result.content if hasattr(result, 'content') else result
-    except:
-        # Fallback to local database
-        return shipment_lookup(order_id)
+    if shipment.status != "Delivered":
+        return {
+            "eligible": False,
+            "message": (
+                f"Shipment {tn} cannot be returned because "
+                f"its current status is '{shipment.status}'."
+            )
+        }
 
+    return {
+        "eligible": True,
+        "message": (
+            f"Your order {tn} was delivered successfully.\n\n"
+            "Are you sure you want to initiate a return? "
+            "Please reply with **YES** to confirm or **NO** to cancel."
+        )
+    }
 @tool
-async def mcp_tracking_lookup(tracking_number: str) -> dict:
+async def initiate_return(tracking_number: str) -> dict:
     """
-    Lookup detailed tracking information via MCP server if available.
-    Falls back to local database if MCP is not available.
+    Initiate a return for a delivered shipment.
+    Uses MCP first, falls back to local DB.
     """
+
+    # --------------------------------------------------
+    # 1️⃣ MCP (authoritative path)
+    # --------------------------------------------------
     try:
-        # Try to get detailed tracking from MCP server
-        result = await mcp_manager.call_tool("tracking_service", "get_tracking", {
-            "tracking_number": tracking_number
-        })
-        return result.content if hasattr(result, 'content') else result
-    except:
-        # Fallback to local database
-        shipment = get_shipment_by_order_id(int(tracking_number[:8]))  # Extract order ID from tracking number
-        if shipment:
-            latest_event = get_latest_tracking_event(shipment.id)
+        result = await mcp_manager.call_tool(
+            "logistics_service",
+            "initiate_return",
+            {"tracking_number": tracking_number},
+        )
+        return result.content if hasattr(result, "content") else result
+    except Exception:
+        pass  # graceful fallback
+
+    # --------------------------------------------------
+    # 2️⃣ DB fallback (transactional & safe)
+    # --------------------------------------------------
+    def _db_tx():
+        tn = normalize_tracking_id(tracking_number)
+
+        with transaction.atomic(using="shipstream"):
+            shipment = (
+                Shipment.objects
+                .using("shipstream")
+                .select_for_update()
+                .filter(tracking_number__iexact=tn)
+                .first()
+            )
+
+            if not shipment:
+                return {
+                    "success": False,
+                    "message": f"I couldn't find shipment {tn}."
+                }
+
+            existing_reverse = (
+                ReverseShipment.objects
+                .using("shipstream")
+                .filter(original_shipment=shipment)
+                .first()
+            )
+
+            if existing_reverse:
+                return {
+                    "success": True,
+                    "reverse_number": existing_reverse.reverse_number,
+                    "message": (
+                        f"A return has already been initiated for {tn}. "
+                        f"The return shipment ID is {existing_reverse.reverse_number}."
+                    )
+                }
+
+            if shipment.status != "Delivered":
+                return {
+                    "success": False,
+                    "message": (
+                        f"Shipment {tn} cannot be returned because "
+                        f"its current status is '{shipment.status}'."
+                    )
+                }
+
+            # 🔄 Update forward shipment
+            shipment.status = "RTO_Initiated"
+            shipment.save(update_fields=["status"])
+
+            # 🔁 Create reverse shipment
+            base_num = shipment.id + 9000
+            reverse_number = f"REV-{base_num}"
+            while (
+                ReverseShipment.objects
+                .using("shipstream")
+                .filter(reverse_number=reverse_number)
+                .exists()
+            ):
+                base_num += 1
+                reverse_number = f"REV-{base_num}"
+
+            reverse = ReverseShipment.objects.using("shipstream").create(
+                reverse_number=reverse_number,
+                original_shipment=shipment,
+                return_date=date.today(),
+                reason="Customer Initiated",
+                refund_status="Pending",
+            )
+
             return {
-                "tracking_number": shipment.tracking_number,
-                "estimated_arrival": str(shipment.estimated_arrival),
-                "current_status": latest_event.status_update if latest_event else "Unknown",
-                "last_updated": str(latest_event.timestamp) if latest_event else None,
+                "success": True,
+                "reverse_number": reverse.reverse_number,
+                "message": (
+                    f"Your return has been initiated successfully for {tn}. "
+                    f"The return shipment ID is {reverse.reverse_number}. "
+                    "Once the item is received, your refund will be processed."
+                )
             }
-        return {}
 
-@tool
-async def mcp_warehouse_lookup(warehouse_id: int) -> dict:
-    """
-    Lookup warehouse information via MCP server if available.
-    """
-    try:
-        result = await mcp_manager.call_tool("warehouse_service", "get_warehouse", {"id": warehouse_id})
-        return result.content if hasattr(result, 'content') else result
-    except:
-        return {}
+    return await sync_to_async(_db_tx)()
+
+# ---------------- AGENT ----------------
 
 def build_shipstream_agent():
-    llm = get_llm()
-    prompt = get_system_prompt("ShipStream Agent")
-
-    # Include both sync and async tools (LangChain will handle async invocation)
-    tools = [shipment_lookup, mcp_shipment_lookup, mcp_tracking_lookup, mcp_warehouse_lookup]
-
-    agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=prompt
+    return create_agent(
+        model=get_llm(),
+        tools=[
+            shipment_lookup,
+            mcp_tracking_lookup,
+            check_return_status,
+            check_return_eligibility,
+            initiate_return,
+        ],
+        system_prompt=get_system_prompt("ShipStream Agent"),
     )
-    return agent
+
