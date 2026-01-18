@@ -5,7 +5,13 @@ from django.db import models
 
 
 class Ticket(models.Model):
-    user_id = models.IntegerField()            # reference to shopcore.User.id
+    user = models.ForeignKey(
+        "shopcore.User",
+        on_delete=models.DO_NOTHING,
+        related_name="caredesk_tickets",
+        db_column="user_id",
+        db_constraint=False,
+    )
     reference_id = models.CharField(max_length=50)  # OrderID or TransactionID
     issue_type = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -16,7 +22,12 @@ class Ticket(models.Model):
 
 
 class TicketMessage(models.Model):
-    ticket_id = models.IntegerField()          # reference to Ticket.id
+    ticket = models.ForeignKey(
+        Ticket,
+        on_delete=models.CASCADE,
+        related_name="messages",
+        db_column="ticket_id",
+    )
     sender = models.CharField(max_length=10)   # User / Agent
     content = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -26,7 +37,12 @@ class TicketMessage(models.Model):
 
 
 class SatisfactionSurvey(models.Model):
-    ticket_id = models.IntegerField()           # reference to Ticket.id
+    ticket = models.ForeignKey(
+        Ticket,
+        on_delete=models.CASCADE,
+        related_name="surveys",
+        db_column="ticket_id",
+    )
     rating = models.IntegerField()
     comments = models.TextField(blank=True)
 
@@ -35,7 +51,12 @@ class SatisfactionSurvey(models.Model):
 
 
 class TicketAttachment(models.Model):
-    ticket_id = models.IntegerField()
+    ticket = models.ForeignKey(
+        Ticket,
+        on_delete=models.CASCADE,
+        related_name="attachments",
+        db_column="ticket_id",
+    )
     kind = models.CharField(max_length=30, default="item_photo")
     image_data = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)

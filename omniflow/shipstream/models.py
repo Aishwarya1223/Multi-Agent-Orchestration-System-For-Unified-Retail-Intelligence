@@ -50,8 +50,18 @@ class ReturnRequest(models.Model):
 
 
 class TrackingEvent(models.Model):
-    shipment_id = models.IntegerField()
-    warehouse_id = models.IntegerField()
+    shipment = models.ForeignKey(
+        Shipment,
+        on_delete=models.CASCADE,
+        related_name="tracking_events",
+        db_column="shipment_id",
+    )
+    warehouse = models.ForeignKey(
+        Warehouse,
+        on_delete=models.CASCADE,
+        related_name="tracking_events",
+        db_column="warehouse_id",
+    )
     timestamp = models.DateTimeField()
     status_update = models.CharField(max_length=100)
 

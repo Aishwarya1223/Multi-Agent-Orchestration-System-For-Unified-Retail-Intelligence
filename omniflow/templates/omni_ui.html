@@ -1480,7 +1480,7 @@ async function sendTextWithImage() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       try { controller.abort(); } catch (e) {}
-    }, 30000);
+    }, 60000);
 
     const payload = {
       query: q,
@@ -1559,7 +1559,9 @@ async function sendTextWithImage() {
   } catch (err) {
     console.error("[sendTextWithImage] TOP-LEVEL ERROR", err);
     setTyping(false);
-    const msg = err && err.message ? err.message : "Sorry — I hit a server error while answering that.";
+    const msg = (err && (err.name === "AbortError" || String(err.message || "").toLowerCase().includes("aborted")))
+      ? "Request timed out. Please try again."
+      : (err && err.message ? err.message : "Sorry — I hit a server error while answering that.");
     appendMessage("system", `Request failed. ${msg}`);
   }
 }

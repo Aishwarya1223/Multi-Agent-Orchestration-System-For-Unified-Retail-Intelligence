@@ -269,6 +269,37 @@ class QueryAPIView(APIView):
                 }
             })
 
+        smalltalk_q = (query or "").strip().lower()
+        if (
+            smalltalk_q
+            and any(k in smalltalk_q for k in [
+                "tell me about yourself",
+                "about yourself",
+                "who are you",
+                "what can you do",
+                "help me",
+                "how can you help",
+            ])
+        ):
+            prompt = get_response_synthesizer_prompt()
+            msg = (
+                "USER_MESSAGE:\n"
+                f"{query}\n\n"
+                "FACTS_JSON:\n"
+                f"{json.dumps({}, ensure_ascii=False)}"
+            )
+            answer = _llm_reply(prompt, msg)
+            return Response({
+                "response": {
+                    "answer": answer,
+                    "confidence": 1.0,
+                    "decision_trace": [
+                        {"agent": "System", "reason": "Smalltalk"},
+                        {"agent": "LLM", "reason": "Smalltalk response"},
+                    ],
+                }
+            })
+
         # --------------------------------------------------
         # Store tracking ONLY if present now
         # --------------------------------------------------
@@ -334,6 +365,7 @@ class QueryAPIView(APIView):
             and (extracted_order_ref or extracted_order_id)
             and not is_shipment_query(query)
             and not is_account_query(query)
+            and not any(k in (query or "").lower() for k in ["paid", "price", "how much", "amount", "cost"])
         ):
             supervisor_query = f"track {extracted_tracking}"
 

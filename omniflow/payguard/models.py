@@ -3,7 +3,13 @@ from django.db import models
 
 class Wallet(models.Model):
     
-    user_id = models.IntegerField()           # reference to shopcore.User.id
+    user = models.ForeignKey(
+        "shopcore.User",
+        on_delete=models.DO_NOTHING,
+        related_name="payguard_wallets",
+        db_column="user_id",
+        db_constraint=False,
+    )
     balance = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=10)
 
@@ -32,9 +38,15 @@ class Transaction(models.Model):
         related_name="transactions",
         db_column="wallet_id",
     )
-    order_id = models.IntegerField()          # reference to shopcore.Order.id
+    order = models.ForeignKey(
+        "shopcore.Order",
+        on_delete=models.DO_NOTHING,
+        related_name="payguard_transactions",
+        db_column="order_id",
+        db_constraint=False,
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2)
-    type = models.CharField(max_length=10)    # Debit / Refund
+    type = models.CharField(max_length=10)
     timestamp = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
