@@ -148,6 +148,7 @@ class QueryAPIView(APIView):
         action_tracking_number = request.data.get("tracking_number")
         reference_id = request.data.get("reference_id")
         image = request.data.get("image")
+        image_frames = request.data.get("image_frames")
         user_email = request.data.get("user_email")
 
         if not user_email:
@@ -254,7 +255,7 @@ class QueryAPIView(APIView):
         # Greeting
         # --------------------------------------------------
 
-        if not query and not image and not reference_id:
+        if not query and not image and not image_frames and not reference_id:
             request.session[name_key] = None
             request.session[name_pending_key] = False
             request.session.save()
@@ -413,6 +414,7 @@ class QueryAPIView(APIView):
                     user_name=user_name,
                     pending_action=pending_action,
                     image=image,
+                    image_frames=image_frames,
                     reference_id=reference_id,
                 ))
             except RuntimeError as e:
@@ -424,6 +426,7 @@ class QueryAPIView(APIView):
                         user_name=user_name,
                         pending_action=pending_action,
                         image=image,
+                        image_frames=image_frames,
                         reference_id=reference_id,
                     )
                 else:

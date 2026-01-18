@@ -23,6 +23,7 @@ class QueryConsumer(AsyncWebsocketConsumer):
 
         query = payload.get("query")
         user_email = payload.get("user_email")
+        image_frames = payload.get("image_frames")
         request_id = payload.get("request_id") or str(uuid.uuid4())
 
         logger.info(f"WebSocket request - User: {user_email}, Query: {query[:50] if query else 'None'}...")
@@ -43,7 +44,7 @@ class QueryConsumer(AsyncWebsocketConsumer):
                 "request_id": request_id,
             }))
 
-            result = await self._run_supervisor_safe(query=query, user_email=user_email)
+            result = await self._run_supervisor_safe(query=query, user_email=user_email, image_frames=image_frames)
             logger.info("WebSocket request completed successfully")
 
             trace = (result or {}).get("decision_trace") or []
@@ -68,10 +69,10 @@ class QueryConsumer(AsyncWebsocketConsumer):
             }))
 
     @database_sync_to_async
-    def _run_supervisor_safe(self, query: str, user_email: str):
+    def _run_supervisor_safe(self, query: str, user_email: str, image_frames=None):
         # Ensure stale DB connections in long-running Daphne workers don't interfere.
         close_old_connections()
-        return run_supervisor(query=query, user_email=user_email)
+        return run_supervisor(query=query, user_email=user_email, image_frames=image_frames)
 
     @database_sync_to_async
     def _log_db_health(self, request_id: str):

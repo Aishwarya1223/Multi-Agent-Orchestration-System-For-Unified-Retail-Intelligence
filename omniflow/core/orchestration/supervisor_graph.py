@@ -14,7 +14,7 @@ import django
 django.setup()
 
 from asgiref.sync import sync_to_async
-from django.db import connections
+from django.db import connections, transaction
 
 from omniflow.utils.logging import get_logger
 from omniflow.utils.prompts import get_response_synthesizer_prompt
@@ -41,6 +41,7 @@ from omniflow.agents.langchain_based_agents.caredesk_agent import (
 from omniflow.shipstream.models import Shipment, ReverseShipment, NdrEvent, ExchangeShipment
 from omniflow.shopcore.models import Order, User, Product
 from omniflow.payguard.models import Transaction
+from omniflow.caredesk.models import Ticket, TicketAttachment
 
 logger = get_logger(__name__)
 
@@ -90,6 +91,7 @@ class SupervisorState(TypedDict):
     user_email: str
     user_name: Optional[str]
     image: Optional[str]
+    image_frames: Optional[List[str]]
     reference_id: Optional[str]
 
     intent: Optional[str]
@@ -113,7 +115,7 @@ def intent_gate(state: SupervisorState) -> SupervisorState:
     q = raw_q.lower()
 
     if state.get("pending_action") and state["pending_action"].get("action") == "await_return_image":
-        if state.get("image"):
+        if state.get("image") or state.get("image_frames"):
             state["intent"] = "return_image"
             return state
 
@@ -510,6 +512,7 @@ async def handle_return_image(state: SupervisorState) -> SupervisorState:
     pending = state.get("pending_action") or {}
     tracking = (pending.get("tracking_number") or "").strip().upper() or None
     image = state.get("image")
+    frames = state.get("image_frames")
 
     if not tracking:
         state["pending_action"] = None
@@ -520,16 +523,91 @@ async def handle_return_image(state: SupervisorState) -> SupervisorState:
         state["confidence_score"] = 0.5
         return state
 
-    if not image:
+    has_frames = isinstance(frames, list) and len(frames) > 0
+    if not image and not has_frames:
         state["final_response"] = _synthesize_answer(
             user_message=state.get("query") or "",
             facts={
                 "return": {
                     "tracking_number": tracking,
                     "stage": "awaiting_image",
-                    "requirement": "item_condition_image",
+                    "requirement": "item_condition_image_or_video",
                 }
             },
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    if not image and has_frames:
+        def _store_return_video() -> dict:
+            with transaction.atomic(using="caredesk"):
+                shipment = (
+                    Shipment.objects.using("shipstream")
+                    .filter(tracking_number__iexact=tracking)
+                    .first()
+                )
+                order_id = getattr(shipment, "order_id", None) if shipment else None
+                if not order_id:
+                    try:
+                        order_id = int(str(tracking).split("-", 1)[-1])
+                    except Exception:
+                        order_id = None
+
+                user_id = None
+                if order_id:
+                    order = (
+                        Order.objects.using("shopcore")
+                        .select_related("user")
+                        .filter(id=int(order_id))
+                        .first()
+                    )
+                    if order and getattr(order, "user_id", None):
+                        user_id = int(order.user_id)
+
+                ticket = None
+                if user_id and order_id:
+                    ticket = (
+                        Ticket.objects.using("caredesk")
+                        .filter(user_id=int(user_id), reference_id=str(order_id))
+                        .order_by("-created_at", "-id")
+                        .first()
+                    )
+                if not ticket:
+                    ticket = Ticket.objects.using("caredesk").create(
+                        user_id=int(user_id) if user_id is not None else 0,
+                        reference_id=str(order_id) if order_id is not None else tracking,
+                        issue_type="Return Proof",
+                        status="Open",
+                    )
+
+                payload = json.dumps(frames, ensure_ascii=False)
+                att = TicketAttachment.objects.using("caredesk").create(
+                    ticket_id=int(ticket.id),
+                    kind="return_video",
+                    image_data=payload,
+                )
+
+                return {
+                    "ticket_id": int(ticket.id),
+                    "attachment_id": int(att.id),
+                    "order_id": int(order_id) if order_id is not None else None,
+                }
+
+        stored = await sync_to_async(_store_return_video)()
+
+        state["pending_action"] = None
+        state["facts"] = {
+            "return": {
+                "tracking_number": tracking,
+                "stage": "processed",
+                "proof": "video",
+                "ticket_id": stored.get("ticket_id"),
+                "attachment_id": stored.get("attachment_id"),
+            }
+        }
+        state["final_response"] = _synthesize_answer(
+            user_message=state.get("query") or "",
+            facts=state["facts"],
         )
         state["confidence_score"] = 1.0
         return state
@@ -1133,6 +1211,7 @@ async def run_supervisor(
     user_name: Optional[str] = None,
     pending_action: Optional[Dict[str, Any]] = None,
     image: Optional[str] = None,
+    image_frames: Optional[List[str]] = None,
     reference_id: Optional[str] = None,
 ) -> dict:
     initial_state: SupervisorState = {
@@ -1140,6 +1219,7 @@ async def run_supervisor(
         "user_email": user_email,
         "user_name": user_name,
         "image": image,
+        "image_frames": image_frames,
         "reference_id": reference_id,
         "intent": None,
         "pending_action": pending_action,
