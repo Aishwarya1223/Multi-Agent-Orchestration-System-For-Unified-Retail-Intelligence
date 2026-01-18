@@ -4,7 +4,8 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONPATH=/app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -30,10 +31,13 @@ COPY . .
 RUN mkdir -p omniflow/db/shipstream omniflow/db/shopcore omniflow/db/caredesk omniflow/db/payguard
 
 # Run database migrations and seed data
-RUN python manage.py migrate && \
-    python manage.py load_dummy_shipments && \
-    python manage.py seed_users && \
-    python manage.py seed_payguard
+RUN python omniflow/manage.py migrate --database=default && \
+    python omniflow/manage.py migrate --database=shopcore && \
+    python omniflow/manage.py migrate --database=shipstream && \
+    python omniflow/manage.py migrate --database=payguard && \
+    python omniflow/manage.py migrate --database=caredesk && \
+    python omniflow/manage.py seed_from_input_data && \
+    python omniflow/manage.py seed_demo_complex_query
 
 # Expose the port the app runs on
 EXPOSE 8000
@@ -43,4 +47,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/ || exit 1
 
 # Run the application
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["python", "omniflow/manage.py", "runserver", "0.0.0.0:8000"]

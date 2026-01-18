@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     )
     
     OPENAI_API_KEY: str = Field(default="",env="OPENAI_API_KEY")
+    SECRET_KEY: str = Field(default="",env='SECRET_KEY')
 
 
 # Create global settings instance
