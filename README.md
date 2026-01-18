@@ -1,6 +1,6 @@
-# OmniFlow: Multi-Agent Retail Intelligence System
+# OmniFlow: Multi-Agent Orchestration System for Unified Retail Intelligence
 
-A unified retail assistant powered by isolated multi-agent orchestration. OmniFlow handles orders, shipments, payments, returns, refunds, NDRs, and exchanges with deterministic, database-grounded responses and natural conversational UI.
+OmniFlow is a Django-based demo of a **hierarchical multi-agent retail assistant** (one orchestrator + four domain agents) that answers questions about **orders, shipments, payments, returns/exchanges (including NDR), and support tickets** with database-grounded responses.
 
 ---
 
@@ -16,6 +16,16 @@ A unified retail assistant powered by isolated multi-agent orchestration. OmniFl
 
 ---
 
+## 🧰 Tech Stack
+
+- **Backend**: Django 5.x (`omniflow/backend`) with API gateway endpoint `/api/query/`
+- **Agent orchestration**: LangGraph supervisor (`omniflow/core/orchestration/supervisor_graph.py`) + LangChain domain agents
+- **Databases**: SQLite (one DB per domain app) enforced by `omniflow/backend/db_router.py`
+- **LLM + Speech**: OpenAI (response synthesis, Whisper `whisper-1` for STT, TTS `tts-1` for audio)
+- **UI**: `omniflow/templates/omni_ui.html` (single-page chat + mic + camera)
+
+---
+
 ## 📋 Prerequisites
 
 - **Python 3.11+**
@@ -25,7 +35,7 @@ A unified retail assistant powered by isolated multi-agent orchestration. OmniFl
 
 ### Frameworks & Protocols Used
 
-- **Backend Framework**: Django 4.x with Django REST Framework
+- **Backend Framework**: Django 5.x
 - **Database**: SQLite (multi-database routing per agent)
 - **Agent Orchestration**: LangChain + LangGraph
 - **API Exposure**: All agents exposed via REST API endpoints
@@ -62,6 +72,9 @@ Create a `.env` file in the root:
 OPENAI_API_KEY=sk-...
 DEBUG=1
 SECRET_KEY=your-secret-key-here
+OPENAI_TTS_MODEL=tts-1
+OPENAI_TTS_VOICE=alloy
+OPENAI_TTS_FORMAT=mp3
 ```
 
 ### 3. Initialize Databases & Seed Data
@@ -69,9 +82,8 @@ SECRET_KEY=your-secret-key-here
 ```bash
 cd omniflow
 python manage.py migrate
-python manage.py load_dummy_shipments
-python manage.py seed_users
-python manage.py seed_payguard
+python manage.py seed_from_input_data
+python manage.py seed_demo_complex_query
 ```
 
 ### 4. Run the Server
@@ -149,6 +161,27 @@ docker-compose up --build
 
 ---
 
+## 🗣️ Speech-to-speech (voice) implementation
+
+Voice is implemented end-to-end: mic input → transcription → query → assistant answer → speech audio.
+
+### Speech-to-text (STT)
+
+- The UI records microphone audio using `MediaRecorder`.
+- Audio is posted to:
+  - `POST /api/whisper/transcribe/` (`omniflow/api_gateway/whisper_views.py`)
+- The backend calls OpenAI Whisper (`whisper-1`) and returns a transcript.
+- A fallback endpoint accepts browser-recognition text:
+  - `POST /api/whisper/fallback/`
+
+### Text-to-speech (TTS)
+
+- After OmniFlow returns an answer, the UI posts `{ "text": "..." }` to:
+  - `POST /api/tts/` (`omniflow/api_gateway/tts_views.py`)
+- The backend calls OpenAI TTS (default model `tts-1`) and returns audio bytes (default `mp3`).
+
+---
+
 ## 📱 Usage Examples
 
 ### Tracking a Shipment
@@ -174,6 +207,14 @@ OmniFlow: Return created. Your return ticket ID is RT-7890 and reverse shipment 
 ```
 User: What’s my wallet balance?
 OmniFlow: Your wallet balance is 125.50 USD.
+```
+
+### Stateful follow-up (order context)
+
+```
+User: my order id is ORD-2026-001
+User: what is the price i paid for the order?
+OmniFlow: You paid <amount> for '<product>' (order <id>).
 ```
 
 ---
@@ -231,6 +272,9 @@ Multi-Agent-Orchestration-System-for-unifiled-retail-intelligence/
 | `OPENAI_API_KEY` | OpenAI API key for LLM, Whisper, TTS | Required |
 | `DEBUG` | Enable Django debug mode | `1` |
 | `SECRET_KEY` | Django secret key | Randomly generated |
+| `OPENAI_TTS_MODEL` | OpenAI TTS model | `tts-1` |
+| `OPENAI_TTS_VOICE` | OpenAI TTS voice | `alloy` |
+| `OPENAI_TTS_FORMAT` | OpenAI TTS output format | `mp3` |
 
 ### Database Routing
 
