@@ -45,7 +45,7 @@ class Command(BaseCommand):
 
                 if not PaymentMethod.objects.using("payguard").filter(wallet_id=wallet.id).exists():
                     PaymentMethod.objects.using("payguard").create(
-                        wallet_id=wallet.id,
+                        wallet=wallet,
                         provider=random.choice(providers),
                         expiry_date=date.today() + timedelta(days=365 * 2),
                     )
@@ -73,7 +73,7 @@ class Command(BaseCommand):
                         wallet.balance = (wallet.balance or Decimal("0.00")) - amount
 
                     Transaction.objects.using("payguard").create(
-                        wallet_id=wallet.id,
+                        wallet=wallet,
                         order_id=order_id,
                         amount=amount,
                         type=tx_type,

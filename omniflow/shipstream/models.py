@@ -1,7 +1,4 @@
 from django.db import models
-
-# Create your models here.
-from django.db import models
 from decimal import Decimal
 
 
@@ -19,7 +16,8 @@ class Shipment(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        related_name="shipments"
+        related_name="shipments",
+        db_constraint=False,
     )
     tracking_number = models.CharField(max_length=50, unique=True,default='')
     estimated_arrival = models.DateField(null=True, blank=True,default=None)

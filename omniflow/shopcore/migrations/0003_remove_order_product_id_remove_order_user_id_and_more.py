@@ -10,24 +10,74 @@ class Migration(migrations.Migration):
         ('shopcore', '0002_alter_user_email'),
     ]
 
+    def _ensure_fk_targets_exist(apps, schema_editor):
+        db = schema_editor.connection.alias
+        Order = apps.get_model("shopcore", "Order")
+        User = apps.get_model("shopcore", "User")
+        Product = apps.get_model("shopcore", "Product")
+
+        user_ids = set()
+        product_ids = set()
+        for o in Order.objects.using(db).all().only("user_id", "product_id"):
+            if getattr(o, "user_id", None) is not None:
+                try:
+                    user_ids.add(int(o.user_id))
+                except Exception:
+                    pass
+            if getattr(o, "product_id", None) is not None:
+                try:
+                    product_ids.add(int(o.product_id))
+                except Exception:
+                    pass
+
+        for uid in sorted(user_ids):
+            if not User.objects.using(db).filter(id=uid).exists():
+                User.objects.using(db).create(
+                    id=uid,
+                    name=f"Legacy User {uid}",
+                    email=None,
+                    premium_status=False,
+                )
+
+        for pid in sorted(product_ids):
+            if not Product.objects.using(db).filter(id=pid).exists():
+                Product.objects.using(db).create(
+                    id=pid,
+                    name=f"Legacy Product {pid}",
+                    category="Unknown",
+                    price=0,
+                )
+
     operations = [
-        migrations.RemoveField(
-            model_name='order',
-            name='product_id',
-        ),
-        migrations.RemoveField(
-            model_name='order',
-            name='user_id',
-        ),
-        migrations.AddField(
-            model_name='order',
-            name='product',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='orders', to='shopcore.product'),
-        ),
-        migrations.AddField(
-            model_name='order',
-            name='user',
-            field=models.ForeignKey(default='', on_delete=django.db.models.deletion.CASCADE, related_name='orders', to='shopcore.user'),
+        migrations.RunPython(_ensure_fk_targets_exist, migrations.RunPython.noop),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AddField(
+                    model_name="order",
+                    name="product",
+                    field=models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="orders",
+                        to="shopcore.product",
+                        db_column="product_id",
+                    ),
+                ),
+                migrations.AddField(
+                    model_name="order",
+                    name="user",
+                    field=models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="orders",
+                        to="shopcore.user",
+                        db_column="user_id",
+                    ),
+                ),
+                migrations.RemoveField(model_name="order", name="product_id"),
+                migrations.RemoveField(model_name="order", name="user_id"),
+            ],
         ),
         migrations.AlterField(
             model_name='user',

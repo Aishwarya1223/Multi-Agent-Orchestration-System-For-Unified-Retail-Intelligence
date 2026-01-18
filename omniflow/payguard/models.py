@@ -1,10 +1,8 @@
 from django.db import models
 
-# Create your models here.
-from django.db import models
-
 
 class Wallet(models.Model):
+    
     user_id = models.IntegerField()           # reference to shopcore.User.id
     balance = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=10)
@@ -14,7 +12,12 @@ class Wallet(models.Model):
 
 
 class PaymentMethod(models.Model):
-    wallet_id = models.IntegerField()         # reference to Wallet.id
+    wallet = models.ForeignKey(
+        Wallet,
+        on_delete=models.CASCADE,
+        related_name="payment_methods",
+        db_column="wallet_id",
+    )
     provider = models.CharField(max_length=50)
     expiry_date = models.DateField()
 
@@ -23,7 +26,12 @@ class PaymentMethod(models.Model):
 
 
 class Transaction(models.Model):
-    wallet_id = models.IntegerField()         # reference to Wallet.id
+    wallet = models.ForeignKey(
+        Wallet,
+        on_delete=models.CASCADE,
+        related_name="transactions",
+        db_column="wallet_id",
+    )
     order_id = models.IntegerField()          # reference to shopcore.Order.id
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     type = models.CharField(max_length=10)    # Debit / Refund

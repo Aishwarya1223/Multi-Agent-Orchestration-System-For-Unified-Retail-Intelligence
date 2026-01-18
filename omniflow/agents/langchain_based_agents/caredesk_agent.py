@@ -1,5 +1,7 @@
 # langchain_based_agents/caredesk_agent.py
 
+from typing import Optional
+
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 from omniflow.agents.langchain_based_agents.base import get_llm, get_system_prompt, mcp_manager
@@ -9,7 +11,6 @@ from omniflow.caredesk.services import (
 )
 from omniflow.agents.input_data import input_tickets_db
 import asyncio
-from langchain_core.tools import tool
 from asgiref.sync import sync_to_async
 
 from omniflow.caredesk.models import Ticket, TicketMessage
@@ -50,6 +51,45 @@ async def auto_create_refund_ticket(
             "to track your refund."
         ),
     }
+
+
+@tool(
+    description=(
+        "Fetch the latest support ticket status for a user. "
+        "Optionally scope the lookup to a specific order_id (stored as Ticket.reference_id)."
+    )
+)
+async def latest_ticket_status(user_id: int, order_id: Optional[int] = None) -> dict:
+    order_ref = str(order_id) if order_id is not None else None
+
+    def _db_lookup():
+        qs = Ticket.objects.using("caredesk").filter(user_id=user_id)
+        if order_ref:
+            qs = qs.filter(reference_id=order_ref)
+        t = qs.order_by("-created_at", "-id").first()
+        if not t:
+            return {
+                "found": False,
+                "reason": "ticket_not_found",
+                "user_id": user_id,
+                "order_id": order_id,
+            }
+
+        status = (t.status or "").strip()
+        status_key = status.lower().replace("-", " ").replace("_", " ").strip()
+        assigned = status_key in {"assigned", "in progress", "inprogress"}
+
+        return {
+            "found": True,
+            "ticket_id": t.id,
+            "status": status,
+            "issue_type": t.issue_type,
+            "created_at": str(t.created_at),
+            "reference_id": t.reference_id,
+            "assigned": assigned,
+        }
+
+    return await sync_to_async(_db_lookup)()
 
 @tool
 def ticket_lookup(user_id: int) -> dict:
@@ -172,7 +212,8 @@ def build_caredesk_agent():
                mcp_add_message, 
                mcp_escalate_ticket, 
                mcp_knowledge_base_search,
-               auto_create_refund_ticket,],
+               auto_create_refund_ticket,
+               latest_ticket_status,],
         system_prompt=prompt
     )
 

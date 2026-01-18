@@ -19,7 +19,7 @@ class Command(BaseCommand):
                         skipped += 1
                         continue
                     except Order.DoesNotExist:
-                        shipment.order = None
+                        shipment.order_id = None
                         shipment.save(update_fields=["order"], using="shipstream")
 
                 try:
@@ -39,7 +39,7 @@ class Command(BaseCommand):
                     skipped += 1
                     continue
 
-                shipment.order = order
+                shipment.order_id = order.id
                 shipment.save(update_fields=["order"], using="shipstream")
                 updated += 1
 

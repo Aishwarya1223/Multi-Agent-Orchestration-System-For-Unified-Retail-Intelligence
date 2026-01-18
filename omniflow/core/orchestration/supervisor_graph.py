@@ -20,19 +20,27 @@ from omniflow.utils.logging import get_logger
 from omniflow.utils.prompts import get_response_synthesizer_prompt
 from omniflow.utils.config import settings as pydantic_settings
 
-from omniflow.agents.langchain_based_agents.shopcore_agent import build_shopcore_agent
+from omniflow.agents.langchain_based_agents.shopcore_agent import (
+    build_shopcore_agent,
+    lookup_order_for_user_product,
+)
 from omniflow.agents.langchain_based_agents.shipstream_agent import (
     build_shipstream_agent,
     check_return_eligibility,
     check_return_status,
     initiate_return,
     submit_return_image,
+    tracking_for_order,
 )
 from omniflow.agents.langchain_based_agents.payguard_agent import build_payguard_agent
-from omniflow.agents.langchain_based_agents.caredesk_agent import build_caredesk_agent
+from omniflow.agents.langchain_based_agents.caredesk_agent import (
+    build_caredesk_agent,
+    latest_ticket_status,
+)
 
 from omniflow.shipstream.models import Shipment, ReverseShipment, NdrEvent, ExchangeShipment
-from omniflow.shopcore.models import Order, User
+from omniflow.shopcore.models import Order, User, Product
+from omniflow.payguard.models import Transaction
 
 logger = get_logger(__name__)
 
@@ -145,6 +153,52 @@ def intent_gate(state: SupervisorState) -> SupervisorState:
     )
     has_any_tracking_id = bool(re.search(r"\b(?:fwd|rev|ndr|exc)-\d+\b", raw_q, re.I))
 
+    is_complex_query = (
+        ("ticket" in q or "support" in q or "case" in q)
+        and any(k in q for k in ["ordered", "order", "bought", "purchase"])
+        and any(k in q for k in ["hasn't arrived", "hasnt arrived", "not arrived", "not delivered", "late"])
+        and not has_any_tracking_id
+    )
+
+    has_product_hint = bool(
+        re.search(r"\"[^\"]+\"|'[^']+'", raw_q)
+        or re.search(r"\bga?mm?ing\s+monitor\b", raw_q, re.I)
+    )
+    asks_paid_amount = bool(
+        has_product_hint
+        and (
+            "paid" in q
+            or "price" in q
+            or "how much" in q
+            or "amount" in q
+            or "cost" in q
+        )
+    )
+
+    order_id_match = re.search(r"\border\s*(\d{3,})\b", raw_q, re.I)
+    asks_paid_amount_for_order = bool(
+        order_id_match
+        and (
+            "paid" in q
+            or "price" in q
+            or "how much" in q
+            or "amount" in q
+            or "cost" in q
+        )
+    )
+
+    if asks_paid_amount_for_order:
+        state["intent"] = "paid_amount_order"
+        return state
+
+    if asks_paid_amount:
+        state["intent"] = "paid_amount"
+        return state
+
+    if is_complex_query:
+        state["intent"] = "complex_query"
+        return state
+
     if asks_return_status and has_any_tracking_id:
         state["intent"] = "return_status"
         return state
@@ -156,7 +210,6 @@ def intent_gate(state: SupervisorState) -> SupervisorState:
         return state
 
     has_user_identity = bool(state.get("user_email"))
-
     has_tracking_id = has_any_tracking_id
 
     if has_tracking_id and not has_user_identity:
@@ -167,7 +220,6 @@ def intent_gate(state: SupervisorState) -> SupervisorState:
         state["confidence_score"] = 1.0
         return state
 
-
     if has_tracking_id:
         state["intent"] = "shipstream"
     elif any(k in q for k in ["wallet", "balance", "payment", "refund"]):
@@ -177,6 +229,223 @@ def intent_gate(state: SupervisorState) -> SupervisorState:
     else:
         state["intent"] = "shopcore"
 
+    return state
+
+
+def _extract_product_name(raw_query: str) -> Optional[str]:
+    text = raw_query or ""
+
+    m = re.search(r"\"([^\"]+)\"", text)
+    if m:
+        return (m.group(1) or "").strip() or None
+
+    m = re.search(r"'([^']+)'", text)
+    if m:
+        return (m.group(1) or "").strip() or None
+
+    if re.search(r"\bga?mm?ing\s+monitor\b", text, re.I):
+        return "Gaming Monitor"
+
+    return None
+
+
+async def handle_complex_query(state: SupervisorState) -> SupervisorState:
+    raw_query = state.get("query") or ""
+    state["decision_trace"].append({"agent": "Supervisor", "reason": "Complex query orchestration"})
+
+    product_name = _extract_product_name(raw_query)
+    if not product_name:
+        state["final_response"] = _synthesize_answer(
+            user_message=raw_query,
+            facts={"shopcore": {"need_product_name": True}},
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    shop = await lookup_order_for_user_product.ainvoke({
+        "user_email": state.get("user_email") or "",
+        "product_name": product_name,
+    })
+
+    if not isinstance(shop, dict) or not shop.get("found"):
+        facts = {"shopcore": shop if isinstance(shop, dict) else {"found": False}}
+        state["facts"] = facts
+        state["final_response"] = _synthesize_answer(user_message=raw_query, facts=facts)
+        state["confidence_score"] = 0.7
+        return state
+
+    order_id = shop.get("order_id")
+    user_id = shop.get("user_id")
+
+    ship = None
+    if isinstance(order_id, int):
+        ship = await tracking_for_order.ainvoke({"order_id": order_id})
+
+    care = None
+    if isinstance(user_id, int):
+        care = await latest_ticket_status.ainvoke({"user_id": user_id, "order_id": order_id})
+
+    facts: Dict[str, Any] = {
+        "shopcore": shop,
+        "shipstream": ship if isinstance(ship, dict) else {"found": False, "reason": "shipstream_unavailable"},
+        "caredesk": care if isinstance(care, dict) else {"found": False, "reason": "caredesk_unavailable"},
+    }
+    state["facts"] = facts
+    state["final_response"] = _synthesize_answer(user_message=raw_query, facts=facts)
+    state["confidence_score"] = 1.0
+    return state
+
+
+async def handle_paid_amount(state: SupervisorState) -> SupervisorState:
+    raw_query = state.get("query") or ""
+    state["decision_trace"].append({"agent": "Supervisor", "reason": "Payment amount lookup"})
+
+    product_name = _extract_product_name(raw_query)
+    if not product_name:
+        state["final_response"] = _synthesize_answer(
+            user_message=raw_query,
+            facts={"shopcore": {"need_product_name": True}},
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    shop = await lookup_order_for_user_product.ainvoke({
+        "user_email": state.get("user_email") or "",
+        "product_name": product_name,
+    })
+
+    if not isinstance(shop, dict) or not shop.get("found"):
+        facts = {"shopcore": shop if isinstance(shop, dict) else {"found": False}}
+        state["facts"] = facts
+        state["final_response"] = _synthesize_answer(user_message=raw_query, facts=facts)
+        state["confidence_score"] = 0.7
+        return state
+
+    order_id = shop.get("order_id")
+    product_id = shop.get("product_id")
+
+    amount = None
+    source = None
+
+    if isinstance(order_id, int):
+        txn = await sync_to_async(
+            lambda: Transaction.objects.using("payguard")
+            .filter(order_id=order_id, type__iexact="Debit")
+            .order_by("-timestamp")
+            .first()
+        )()
+        if txn and getattr(txn, "amount", None) is not None:
+            amount = str(txn.amount)
+            source = "transaction"
+
+    if amount is None and isinstance(product_id, int):
+        prod = await sync_to_async(
+            lambda: Product.objects.using("shopcore").filter(id=product_id).first()
+        )()
+        if prod and getattr(prod, "price", None) is not None:
+            amount = str(prod.price)
+            source = "product_price"
+
+    facts: Dict[str, Any] = {
+        "shopcore": shop,
+        "payguard": {
+            "order_id": order_id,
+            "amount": amount,
+            "source": source,
+            "found": bool(amount),
+        },
+    }
+    state["facts"] = facts
+
+    display_product = shop.get("product_name") or product_name
+
+    if amount:
+        state["final_response"] = (
+            f"You paid {amount} for '{display_product}' (order {order_id})."
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    state["final_response"] = (
+        f"I found your order {order_id} for '{display_product}', but I don't have the payment amount recorded."
+    )
+    state["confidence_score"] = 0.7
+    return state
+
+
+async def handle_paid_amount_for_order(state: SupervisorState) -> SupervisorState:
+    raw_query = state.get("query") or ""
+    state["decision_trace"].append({"agent": "Supervisor", "reason": "Payment amount lookup (order)"})
+
+    m = re.search(r"\border\s*(\d{3,})\b", raw_query, re.I)
+    if not m:
+        state["final_response"] = _synthesize_answer(
+            user_message=raw_query,
+            facts={"payguard": {"need_order_id": True}},
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    try:
+        order_id = int(m.group(1))
+    except Exception:
+        order_id = None
+
+    if not order_id:
+        state["final_response"] = _synthesize_answer(
+            user_message=raw_query,
+            facts={"payguard": {"need_order_id": True}},
+        )
+        state["confidence_score"] = 1.0
+        return state
+
+    txn = await sync_to_async(
+        lambda: Transaction.objects.using("payguard")
+        .filter(order_id=order_id, type__iexact="Debit")
+        .order_by("-timestamp")
+        .first()
+    )()
+
+    amount = str(txn.amount) if txn and getattr(txn, "amount", None) is not None else None
+
+    order = await sync_to_async(
+        lambda: Order.objects.using("shopcore").select_related("product").filter(id=order_id).first()
+    )()
+    product_name = None
+    if order and getattr(order, "product", None):
+        product_name = getattr(order.product, "name", None)
+
+    facts: Dict[str, Any] = {
+        "shopcore": {
+            "order_id": order_id,
+            "product_name": product_name,
+            "found": bool(order),
+        },
+        "payguard": {
+            "order_id": order_id,
+            "amount": amount,
+            "found": bool(amount),
+        },
+    }
+    state["facts"] = facts
+
+    if amount:
+        if product_name:
+            state["final_response"] = f"You paid {amount} for '{product_name}' (order {order_id})."
+        else:
+            state["final_response"] = f"You paid {amount} for order {order_id}."
+        state["confidence_score"] = 1.0
+        return state
+
+    if order:
+        state["final_response"] = (
+            f"I found order {order_id}, but I don't have the payment amount recorded."
+        )
+        state["confidence_score"] = 0.7
+        return state
+
+    state["final_response"] = f"I couldn't find order {order_id}."
+    state["confidence_score"] = 1.0
     return state
 
 async def handle_return_status(state: SupervisorState) -> SupervisorState:
@@ -735,6 +1004,17 @@ def build_supervisor_graph():
     graph.add_node("return_status", handle_return_status)
 
     # -----------------------------
+    # Complex cross-domain query
+    # -----------------------------
+    graph.add_node("complex_query", handle_complex_query)
+
+    # -----------------------------
+    # Cross-domain: paid amount
+    # -----------------------------
+    graph.add_node("paid_amount", handle_paid_amount)
+    graph.add_node("paid_amount_order", handle_paid_amount_for_order)
+
+    # -----------------------------
     # Domain agents
     # -----------------------------
     graph.add_node("shopcore", call_shopcore)
@@ -763,6 +1043,13 @@ def build_supervisor_graph():
             "return_cancel": "return_cancel",
             "return_status": "return_status",
 
+            # Complex orchestration
+            "complex_query": "complex_query",
+
+            # Paid amount
+            "paid_amount": "paid_amount",
+            "paid_amount_order": "paid_amount_order",
+
             # Direct fallback when intent_gate already produced final_response
             "aggregate": "aggregate",
 
@@ -782,6 +1069,10 @@ def build_supervisor_graph():
     graph.add_edge("return_image", "aggregate")
     graph.add_edge("return_cancel", "aggregate")
     graph.add_edge("return_status", "aggregate")
+
+    graph.add_edge("complex_query", "aggregate")
+    graph.add_edge("paid_amount", "aggregate")
+    graph.add_edge("paid_amount_order", "aggregate")
 
     graph.add_edge("shopcore", "aggregate")
     graph.add_edge("shipstream", "aggregate")

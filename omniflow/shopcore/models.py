@@ -24,7 +24,6 @@ class Order(models.Model):
         User,
         on_delete=models.CASCADE,
         related_name="orders",
-        default=''
     )
     product = models.ForeignKey(
         Product,

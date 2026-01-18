@@ -13,7 +13,7 @@ from omniflow.agents.langchain_based_agents.base import (
     get_system_prompt,
     mcp_manager,
 )
-from omniflow.shipstream.models import Shipment, ReturnRequest
+from omniflow.shipstream.models import Shipment, ReturnRequest, TrackingEvent, Warehouse
 
 def normalize_tracking_id(value: str) -> str:
     return (value or "").strip().upper()
@@ -65,6 +65,69 @@ async def mcp_tracking_lookup(query: str) -> dict:
         return result.content if hasattr(result, "content") else result
     except Exception:
         return await _shipment_lookup_internal(tracking_number)
+
+
+@tool(
+    description=(
+        "Get shipment tracking events and current location for the latest shipment "
+        "associated with a given ShopCore order_id."
+    )
+)
+async def tracking_for_order(order_id: int) -> dict:
+    def _db_lookup():
+        shipment = (
+            Shipment.objects
+            .using("shipstream")
+            .filter(order_id=order_id)
+            .order_by("-id")
+            .first()
+        )
+        if not shipment:
+            return {
+                "found": False,
+                "reason": "shipment_not_found_for_order",
+                "order_id": order_id,
+            }
+
+        events = list(
+            TrackingEvent.objects
+            .using("shipstream")
+            .filter(shipment_id=shipment.id)
+            .order_by("-timestamp")[:10]
+        )
+
+        warehouse_ids = {e.warehouse_id for e in events if getattr(e, "warehouse_id", None) is not None}
+        warehouses = (
+            Warehouse.objects
+            .using("shipstream")
+            .filter(id__in=list(warehouse_ids))
+        )
+        warehouse_map = {w.id: w.location for w in warehouses}
+
+        event_payload = []
+        for e in events:
+            event_payload.append({
+                "timestamp": str(e.timestamp),
+                "status_update": e.status_update,
+                "warehouse_id": e.warehouse_id,
+                "location": warehouse_map.get(e.warehouse_id),
+            })
+
+        current_location = None
+        if event_payload:
+            current_location = event_payload[0].get("location")
+
+        return {
+            "found": True,
+            "order_id": order_id,
+            "shipment_id": shipment.id,
+            "tracking_number": shipment.tracking_number,
+            "shipment_status": shipment.status,
+            "current_location": current_location,
+            "events": event_payload,
+        }
+
+    return await sync_to_async(_db_lookup)()
 
 
 from omniflow.shipstream.models import ReverseShipment
@@ -366,6 +429,7 @@ def build_shipstream_agent():
         tools=[
             shipment_lookup,
             mcp_tracking_lookup,
+            tracking_for_order,
             check_return_status,
             check_return_eligibility,
             initiate_return,

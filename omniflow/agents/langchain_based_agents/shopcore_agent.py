@@ -148,6 +148,59 @@ async def verify_order_ownership(order_id: int, user_email: str) -> dict:
         "user_id": user.id,
     }
 
+@tool(
+    description=(
+        "Resolve the latest order for a given user (by email) and product name. "
+        "Returns user_id, product_id, and order_id if found."
+    )
+)
+async def lookup_order_for_user_product(user_email: str, product_name: str) -> dict:
+    user_email = (user_email or "").strip().lower()
+    product_name = (product_name or "").strip()
+
+    if not user_email or not product_name:
+        return {"found": False, "reason": "missing_user_or_product"}
+
+    from omniflow.shopcore.models import User, Product, Order
+
+    user = await sync_to_async(
+        lambda: User.objects.using("shopcore").filter(email__iexact=user_email).first()
+    )()
+    if not user:
+        return {"found": False, "reason": "user_not_found"}
+
+    product = await sync_to_async(
+        lambda: Product.objects.using("shopcore")
+        .filter(name__icontains=product_name)
+        .order_by("id")
+        .first()
+    )()
+    if not product:
+        return {"found": False, "reason": "product_not_found", "user_id": user.id}
+
+    order = await sync_to_async(
+        lambda: Order.objects.using("shopcore")
+        .filter(user_id=user.id, product_id=product.id)
+        .order_by("-order_date", "-id")
+        .first()
+    )()
+    if not order:
+        return {
+            "found": False,
+            "reason": "order_not_found",
+            "user_id": user.id,
+            "product_id": product.id,
+        }
+
+    return {
+        "found": True,
+        "user_id": user.id,
+        "product_id": product.id,
+        "product_name": product.name,
+        "order_id": order.id,
+        "order_date": str(order.order_date),
+        "order_status": order.status,
+    }
 
 async def initialize_mcp_connections():
     """Initialize MCP connections for shopcore agent"""
@@ -171,6 +224,7 @@ def build_shopcore_agent():
             mcp_product_lookup,
             mcp_order_lookup,
             verify_order_ownership,
+            lookup_order_for_user_product,
         ],
         system_prompt=prompt
     )
